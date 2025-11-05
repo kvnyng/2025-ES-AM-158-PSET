@@ -1,0 +1,1139 @@
+<html>
+<head>
+<title>pset2.ipynb</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #2aacb8;}
+.s5 { color: #6aab73;}
+.s6 { color: #5f826b; font-style: italic;}
+.ls0 { height: 1px; border-width: 0; color: #43454a; background-color:#43454a}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pset2.ipynb</font>
+</center></td></tr></table>
+<pre><span class="s0">#%% md 
+</span><span class="s1"># Problem set 2 - Monte Carlo method &amp; TD learning 
+ 
+**Due: 11:59pm, October 10, 2025** 
+ 
+### Problem 1 - Monte Carlo evaluation and Monte Carlo control (Coding). 
+ 
+TODO list: 
+ 
+- (1) Finish MC Policy Evaluation Code (10 pt) 
+- (2) Try different step size and discuss (10 pt) 
+- (3) Finish MC + Exploring Starts Code (10 pt) 
+- (4) Plot the convergence behavior, discuss the plot (10 pt) 
+- (5) Proof of Monte-Carlo control on *random walk* problem (20 pt) 
+- (6) Finish MC + epsilon greedy Code (10 pt) 
+ 
+ 
+&lt;!-- - MC Policy Evaluation Code (long runtime) 
+- MC Policy Evaluation Different Step size plot 
+- MC + Exploring Starts Code (long run time) 
+- MC + ES Observe Plot, describe observation 
+- MC + ES proof  
+- MC + epsilon greedy code  --&gt; 
+ 
+### Problem 2 - Temporal-difference evaluation, SARSA and Q-learning 
+- (1) Finish TD evaluation Code (10 pt) 
+- (2) Finish SARSA algorithm (10 pt) 
+- (3) Finish Q-learning algorithm (10 pt) 
+ 
+ 
+&lt;!-- - TD Evaluation 
+- SARSA 
+- Q-Learning --&gt; 
+ <hr class="ls0"></span><span class="s0">#%% md 
+</span><span class="s1">## Problem 1: Monte-Carlo method on CliffWalk environment. 
+ 
+Recall from last PSET, the **CliffWalking** gridworld is a 4×12 grid. The agent starts at the bottom-left cell and aims to reach the bottom-right. The bottom row between start and goal is a **cliff**; stepping into it ends the episode with a large penalty. Each non-terminal step yields −1; stepping into the cliff yields −100 (and termination).   
+ 
+In this problem we will **directly use Gym/Gymnasium** to interact with the environment (`CliffWalking-v1`) and perform **Monte-Carlo (MC) method**. Here we provide the print utility function as the same in PSET 1. 
+ <hr class="ls0"></span><span class="s0">#%% 
+</span><span class="s2">import </span><span class="s1">numpy </span><span class="s2">as </span><span class="s1">np</span>
+<span class="s2">import </span><span class="s1">random</span>
+<span class="s2">import </span><span class="s1">gymnasium </span><span class="s2">as </span><span class="s1">gym</span>
+<span class="s2">from </span><span class="s1">tqdm </span><span class="s2">import </span><span class="s1">tqdm</span>
+<span class="s2">import </span><span class="s1">matplotlib</span><span class="s3">.</span><span class="s1">pyplot </span><span class="s2">as </span><span class="s1">plt</span>
+
+<span class="s0"># ----- Reproducibility -----</span>
+<span class="s1">seed </span><span class="s3">= </span><span class="s4">0</span>
+<span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">seed</span><span class="s3">(</span><span class="s1">seed</span><span class="s3">)          </span><span class="s0"># numpy RNG (env seeding can be done at reset time)</span>
+
+<span class="s0"># ----- Environment -----</span>
+<span class="s1">env </span><span class="s3">= </span><span class="s1">gym</span><span class="s3">.</span><span class="s1">make</span><span class="s3">(</span><span class="s5">&quot;CliffWalking-v1&quot;</span><span class="s3">)  </span><span class="s0"># 4x12 grid; bottom row is cliff + goal</span>
+
+<span class="s0"># Pretty printing for small numeric tables</span>
+<span class="s1">np</span><span class="s3">.</span><span class="s1">set_printoptions</span><span class="s3">(</span><span class="s1">precision</span><span class="s3">=</span><span class="s4">3</span><span class="s3">, </span><span class="s1">suppress</span><span class="s3">=</span><span class="s2">True</span><span class="s3">)</span>
+
+<span class="s2">def </span><span class="s1">print_values</span><span class="s3">(</span><span class="s1">values</span><span class="s3">, </span><span class="s1">nrow</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">ncol</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">title</span><span class="s3">: </span><span class="s1">str </span><span class="s3">= </span><span class="s5">&quot;State Values&quot;</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Print a value table V in grid form. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">values </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">asarray</span><span class="s3">(</span><span class="s1">values</span><span class="s3">).</span><span class="s1">reshape</span><span class="s3">(</span><span class="s1">nrow</span><span class="s3">, </span><span class="s1">ncol</span><span class="s3">)</span>
+    <span class="s1">print</span><span class="s3">(</span><span class="s1">title</span><span class="s3">)</span>
+    <span class="s2">for </span><span class="s1">r </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">nrow</span><span class="s3">):</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s5">&quot; &quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s5">f&quot;</span><span class="s2">{</span><span class="s1">values</span><span class="s3">[</span><span class="s1">r</span><span class="s3">, </span><span class="s1">c</span><span class="s3">]</span><span class="s2">:</span><span class="s5">6.2f</span><span class="s2">}</span><span class="s5">&quot; </span><span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">ncol</span><span class="s3">)))</span>
+    <span class="s1">print</span><span class="s3">()</span>
+
+<span class="s2">def </span><span class="s1">print_policy</span><span class="s3">(</span><span class="s1">pi</span><span class="s3">, </span><span class="s1">nrow</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">ncol</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">title</span><span class="s3">: </span><span class="s1">str </span><span class="s3">= </span><span class="s5">&quot;Policy&quot;</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Render a policy on the CliffWalking grid as arrows. 
+ 
+    The environment uses the action indexing: 
+        0 = UP, 1 = RIGHT, 2 = DOWN, 3 = LEFT 
+    &quot;&quot;&quot;</span>
+    <span class="s1">arrow </span><span class="s3">= {</span><span class="s4">0</span><span class="s3">: </span><span class="s5">&quot;^&quot;</span><span class="s3">, </span><span class="s4">1</span><span class="s3">: </span><span class="s5">&quot;&gt;&quot;</span><span class="s3">, </span><span class="s4">2</span><span class="s3">: </span><span class="s5">&quot;v&quot;</span><span class="s3">, </span><span class="s4">3</span><span class="s3">: </span><span class="s5">&quot;&lt;&quot;</span><span class="s3">}  </span><span class="s0"># matches env action semantics</span>
+    <span class="s1">print</span><span class="s3">(</span><span class="s1">title</span><span class="s3">)</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">nrow</span><span class="s3">):</span>
+        <span class="s1">row_syms </span><span class="s3">= []</span>
+        <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">ncol</span><span class="s3">):</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">i </span><span class="s3">* </span><span class="s1">ncol </span><span class="s3">+ </span><span class="s1">j</span>
+            <span class="s1">p </span><span class="s3">= </span><span class="s1">pi</span><span class="s3">[</span><span class="s1">s</span><span class="s3">]</span>
+
+            <span class="s0"># Determine greedy action(s)</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">p</span><span class="s3">, </span><span class="s1">list</span><span class="s3">) </span><span class="s2">and </span><span class="s1">len</span><span class="s3">(</span><span class="s1">p</span><span class="s3">) == </span><span class="s4">4</span><span class="s3">:</span>
+                <span class="s1">best </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">argwhere</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">array</span><span class="s3">(</span><span class="s1">p</span><span class="s3">) == </span><span class="s1">np</span><span class="s3">.</span><span class="s1">max</span><span class="s3">(</span><span class="s1">p</span><span class="s3">)).</span><span class="s1">flatten</span><span class="s3">().</span><span class="s1">tolist</span><span class="s3">()</span>
+            <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">p</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+                <span class="s1">best </span><span class="s3">= [</span><span class="s1">p</span><span class="s3">]</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">arr </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">array</span><span class="s3">(</span><span class="s1">p</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">).</span><span class="s1">ravel</span><span class="s3">()</span>
+                <span class="s1">best </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">argwhere</span><span class="s3">(</span><span class="s1">arr </span><span class="s3">== </span><span class="s1">np</span><span class="s3">.</span><span class="s1">max</span><span class="s3">(</span><span class="s1">arr</span><span class="s3">)).</span><span class="s1">flatten</span><span class="s3">().</span><span class="s1">tolist</span><span class="s3">()</span>
+
+            <span class="s0"># Cliff/goal cells (bottom row except column 0) rendered as terminal</span>
+            <span class="s2">if </span><span class="s1">i </span><span class="s3">== </span><span class="s1">nrow </span><span class="s3">- </span><span class="s4">1 </span><span class="s2">and </span><span class="s1">j </span><span class="s3">&gt; </span><span class="s4">0</span><span class="s3">:</span>
+                <span class="s1">row_syms</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s5">&quot;T&quot;</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">row_syms</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s5">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">arrow</span><span class="s3">[</span><span class="s1">a</span><span class="s3">] </span><span class="s2">for </span><span class="s1">a </span><span class="s2">in </span><span class="s1">best</span><span class="s3">))</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s5">&quot; &quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">sym </span><span class="s2">if </span><span class="s1">sym </span><span class="s2">else </span><span class="s5">&quot;.&quot; </span><span class="s2">for </span><span class="s1">sym </span><span class="s2">in </span><span class="s1">row_syms</span><span class="s3">))</span>
+    <span class="s1">print</span><span class="s3">()</span>
+
+<span class="s0"># ----- Reference table (ground-truth under random policy from PSET1) -----</span>
+<span class="s0"># Shape is (4, 12) in row-major order, then flattened to 1D for convenience.</span>
+<span class="s0"># Values correspond to the state-value function V^π for the UNIFORM RANDOM policy.</span>
+<span class="s1">V_random_gt </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">array</span><span class="s3">([</span>
+    <span class="s3">[-</span><span class="s4">143.21</span><span class="s3">, -</span><span class="s4">147.36</span><span class="s3">, -</span><span class="s4">151.35</span><span class="s3">, -</span><span class="s4">153.93</span><span class="s3">, -</span><span class="s4">155.11</span><span class="s3">, -</span><span class="s4">155.05</span><span class="s3">, -</span><span class="s4">153.66</span><span class="s3">, -</span><span class="s4">150.44</span><span class="s3">, -</span><span class="s4">144.43</span><span class="s3">, -</span><span class="s4">134.39</span><span class="s3">, -</span><span class="s4">119.88</span><span class="s3">, -</span><span class="s4">105.06</span><span class="s3">],</span>
+    <span class="s3">[-</span><span class="s4">164.99</span><span class="s3">, -</span><span class="s4">174.34</span><span class="s3">, -</span><span class="s4">180.41</span><span class="s3">, -</span><span class="s4">183.52</span><span class="s3">, -</span><span class="s4">184.80</span><span class="s3">, -</span><span class="s4">184.82</span><span class="s3">, -</span><span class="s4">183.62</span><span class="s3">, -</span><span class="s4">180.68</span><span class="s3">, -</span><span class="s4">174.67</span><span class="s3">, -</span><span class="s4">162.95</span><span class="s3">, -</span><span class="s4">141.20</span><span class="s3">, -</span><span class="s4">108.16</span><span class="s3">],</span>
+    <span class="s3">[-</span><span class="s4">207.96</span><span class="s3">, -</span><span class="s4">237.09</span><span class="s3">, -</span><span class="s4">246.20</span><span class="s3">, -</span><span class="s4">249.36</span><span class="s3">, -</span><span class="s4">250.43</span><span class="s3">, -</span><span class="s4">250.52</span><span class="s3">, -</span><span class="s4">249.79</span><span class="s3">, -</span><span class="s4">247.81</span><span class="s3">, -</span><span class="s4">243.17</span><span class="s3">, -</span><span class="s4">231.62</span><span class="s3">, -</span><span class="s4">199.35</span><span class="s3">,  -</span><span class="s4">96.76</span><span class="s3">],</span>
+    <span class="s3">[-</span><span class="s4">261.35</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">,    </span><span class="s4">0.00</span><span class="s3">],</span>
+<span class="s3">], </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">).</span><span class="s1">flatten</span><span class="s3">()</span>
+<hr class="ls0"><span class="s0">#%% md 
+</span><span class="s1">### 1.1 Monte-Carlo evaluation 
+ 
+Let $\mathcal{D}(s)$ denote the set of all time indices at which state $s$ is visited across sampled episodes. Then the Monte Carlo estimate of the value function is 
+$$ 
+\hat{V}(s)=\frac{1}{|\mathcal{D}(s)|}\sum_{t\in \mathcal{D}(s)} g_t . 
+\tag{2.3} 
+$$ 
+ 
+There are two common variants: 
+ 
+- **First-visit MC:** use only the first occurrence of $s$ in each episode. 
+- **Every-visit MC:** use all occurrences of $s$ within an episode. 
+ 
+You can test both of them in 1.2. For 1.1 you need to finish the **first-visit** one. 
+ 
+**TODO: Finish the code block for monte-carlo evaluation.** 
+ <hr class="ls0"></span><span class="s0">#%% 
+</span><span class="s2">def </span><span class="s1">mc_evaluate</span><span class="s3">(</span><span class="s1">policy</span><span class="s3">, </span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s4">5000</span><span class="s3">, </span><span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">, </span><span class="s1">seed</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    First-visit Monte Carlo (MC) state-value prediction (Sutton &amp; Barto, Alg. 5.1). 
+ 
+    Parameters 
+    ---------- 
+    policy : ndarray, shape (nS, nA) 
+        Row-stochastic policy: for each state s, policy[s] is a prob. dist. over actions. 
+    env : Gymnasium-like environment 
+        Must expose discrete observation_space.n and action_space.n and return 
+        (obs, reward, terminated, truncated, info) from step(). 
+    episodes : int 
+        Number of episodes to sample. 
+    gamma : float 
+        Discount factor in [0, 1]. 
+    seed : int | None 
+        If given, used to seed a NumPy RNG and (re)seed env at each episode start. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">nS</span><span class="s3">, </span><span class="s1">nA </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">observation_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">, </span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span>
+    <span class="s1">V </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">(</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)          </span><span class="s0"># value estimates</span>
+    <span class="s1">N_first </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">(</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">int</span><span class="s3">)      </span><span class="s0"># first-visit counts per state</span>
+    <span class="s1">visits </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">(</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">int</span><span class="s3">)       </span><span class="s0"># total visits (diagnostic only)</span>
+    <span class="s1">errors </span><span class="s3">= []</span>
+
+    <span class="s1">rng </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">default_rng</span><span class="s3">(</span><span class="s1">seed</span><span class="s3">)</span>
+
+    <span class="s2">for </span><span class="s1">ep </span><span class="s2">in </span><span class="s1">tqdm</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s1">episodes</span><span class="s3">), </span><span class="s1">desc</span><span class="s3">=</span><span class="s5">&quot;MC first-visit&quot;</span><span class="s3">):</span>
+        <span class="s0"># Episode generation under π</span>
+        <span class="s1">s</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">reset</span><span class="s3">(</span><span class="s1">seed</span><span class="s3">=</span><span class="s1">int</span><span class="s3">(</span><span class="s1">rng</span><span class="s3">.</span><span class="s1">integers</span><span class="s3">(</span><span class="s4">1e9</span><span class="s3">)) </span><span class="s2">if </span><span class="s1">seed </span><span class="s2">is not None else None</span><span class="s3">)</span>
+        <span class="s1">states</span><span class="s3">, </span><span class="s1">rewards </span><span class="s3">= [], []</span>
+        <span class="s1">done </span><span class="s3">= </span><span class="s2">False</span>
+
+        <span class="s2">while not </span><span class="s1">done</span><span class="s3">:</span>
+            <span class="s0">##########################################</span>
+            <span class="s0"># TODO: sample action from policy and step in env</span>
+            <span class="s0"># hint: use env.step(a) to get (s', r, terminated, truncated, info)</span>
+            <span class="s0">##########################################</span>
+
+            <span class="s0"># Sample action from policy</span>
+            <span class="s1">action </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">choice</span><span class="s3">(</span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">, </span><span class="s1">p</span><span class="s3">=</span><span class="s1">policy</span><span class="s3">[</span><span class="s1">s</span><span class="s3">])</span>
+            <span class="s0"># Step in environment</span>
+            <span class="s1">next_state</span><span class="s3">, </span><span class="s1">reward</span><span class="s3">, </span><span class="s1">done</span><span class="s3">, </span><span class="s1">truncated</span><span class="s3">, </span><span class="s1">info </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">step</span><span class="s3">(</span><span class="s1">action</span><span class="s3">)</span>
+            
+            <span class="s0"># Update state and reward lists</span>
+            <span class="s1">states</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s1">rewards</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">reward</span><span class="s3">)</span>
+            
+            <span class="s0"># Update current state</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">next_state </span>
+            
+            <span class="s0"># If episode is done, break loop</span>
+            <span class="s2">if </span><span class="s1">done</span><span class="s3">:</span>
+                <span class="s2">break</span>
+            
+        <span class="s0"># Identify first visits of each state in this episode</span>
+        <span class="s1">first_visit_mask </span><span class="s3">= [</span><span class="s2">False</span><span class="s3">] * </span><span class="s1">len</span><span class="s3">(</span><span class="s1">states</span><span class="s3">)</span>
+        <span class="s1">seen_from_start </span><span class="s3">= </span><span class="s1">set</span><span class="s3">()</span>
+        <span class="s2">for </span><span class="s1">t</span><span class="s3">, </span><span class="s1">st </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">states</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">st </span><span class="s2">not in </span><span class="s1">seen_from_start</span><span class="s3">:</span>
+                <span class="s1">seen_from_start</span><span class="s3">.</span><span class="s1">add</span><span class="s3">(</span><span class="s1">st</span><span class="s3">)</span>
+                <span class="s1">first_visit_mask</span><span class="s3">[</span><span class="s1">t</span><span class="s3">] = </span><span class="s2">True</span>
+
+        <span class="s0"># Backward return accumulation; update ONLY on first visits</span>
+        <span class="s0">##########################################</span>
+        <span class="s0"># TODO: update V and N_first for first-visit states</span>
+        <span class="s0">##########################################</span>
+
+        <span class="s0"># Calculate returns for each first-visit state</span>
+        <span class="s1">G </span><span class="s3">= </span><span class="s4">0</span>
+        <span class="s2">for </span><span class="s1">t </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">states</span><span class="s3">) - </span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">):</span>
+            <span class="s1">G </span><span class="s3">= </span><span class="s1">rewards</span><span class="s3">[</span><span class="s1">t</span><span class="s3">] + </span><span class="s1">gamma </span><span class="s3">* </span><span class="s1">G</span>
+            <span class="s2">if </span><span class="s1">first_visit_mask</span><span class="s3">[</span><span class="s1">t</span><span class="s3">]:</span>
+                <span class="s1">st </span><span class="s3">= </span><span class="s1">states</span><span class="s3">[</span><span class="s1">t</span><span class="s3">]</span>
+                <span class="s1">N_first</span><span class="s3">[</span><span class="s1">st</span><span class="s3">] += </span><span class="s4">1</span>
+                <span class="s1">V</span><span class="s3">[</span><span class="s1">st</span><span class="s3">] += (</span><span class="s1">G </span><span class="s3">- </span><span class="s1">V</span><span class="s3">[</span><span class="s1">st</span><span class="s3">]) / </span><span class="s1">N_first</span><span class="s3">[</span><span class="s1">st</span><span class="s3">]</span>
+            
+        
+        <span class="s1">rmse </span><span class="s3">= </span><span class="s1">float</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">sqrt</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">mean</span><span class="s3">((</span><span class="s1">V </span><span class="s3">- </span><span class="s1">V_random_gt</span><span class="s3">) ** </span><span class="s4">2</span><span class="s3">)))</span>
+        <span class="s1">errors</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rmse</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">V</span><span class="s3">, </span><span class="s1">errors</span>
+
+
+<span class="s0"># Uniform-random policy for evaluation</span>
+<span class="s1">policy </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">ones</span><span class="s3">((</span><span class="s1">env</span><span class="s3">.</span><span class="s1">observation_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">, </span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">)) / </span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span>
+
+<span class="s1">V</span><span class="s3">, </span><span class="s1">errors </span><span class="s3">= </span><span class="s1">mc_evaluate</span><span class="s3">(</span><span class="s1">policy</span><span class="s3">, </span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s4">1000</span><span class="s3">)</span>
+
+<span class="s1">print_values</span><span class="s3">(</span><span class="s1">V</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">, </span><span class="s5">&quot;Estimated State Values (MC First-Visit)&quot;</span><span class="s3">)</span>
+<span class="s0"># Compare visually with PSET1 reference; they should be close (up to sampling noise).</span>
+
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">figure</span><span class="s3">()</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">plot</span><span class="s3">(</span><span class="s1">errors</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">xlabel</span><span class="s3">(</span><span class="s5">&quot;Episode&quot;</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">ylabel</span><span class="s3">(</span><span class="s5">&quot;RMSE vs V_random_gt&quot;</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">title</span><span class="s3">(</span><span class="s5">&quot;MC Evaluation RMSE&quot;</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">grid</span><span class="s3">(</span><span class="s2">True</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">show</span><span class="s3">()</span>
+
+<span class="s0"># Note: On my laptop this may take ~1 minute for 1k episodes, depending on Python + Gym versions.</span><hr class="ls0"><span class="s0">#%% md 
+</span><span class="s1">### 1.2 Plot for different step size. 
+ 
+Recall equation (2.4) in the lecture note: 
+$$ 
+\hat{V}(s) \leftarrow \hat{V}(s) + \alpha_{N(s)}\!\left(g_t - \hat{V}(s)\right), 
+\qquad \alpha_{N(s)} &gt; 0 \text{ diminishing.} 
+$$ 
+ 
+For standard Monte-Carlo evaluation, you will take the $\alpha_{N(s)}$ as $\frac{1}{N(s)}$. But you have more options: you can do constant step or other steps you prefer. 
+ 
+**TODO: test different step size options (sample average, constant step size with different values, and another step size schedule that satisfies Robbins-Monro), and you can also change first-visit to every-visit. What do you observe?** 
+ 
+Hint: you can try save different loss curves and plot in the same plot <hr class="ls0"></span><span class="s0">#%% 
+</span><span class="s2">def </span><span class="s1">mc_evaluate_step_sizes</span><span class="s3">(</span><span class="s1">policy</span><span class="s3">, </span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s4">5000</span><span class="s3">, </span><span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">, </span><span class="s1">seed</span><span class="s3">=</span><span class="s2">None</span><span class="s3">, </span>
+                          <span class="s1">step_size_type</span><span class="s3">=</span><span class="s5">'sample_average'</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.1</span><span class="s3">, </span><span class="s1">visit_type</span><span class="s3">=</span><span class="s5">'first'</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Monte Carlo evaluation with different step size options. 
+     
+    Parameters: 
+    ----------- 
+    step_size_type : str 
+        - 'sample_average': α = 1/N(s) (standard MC) 
+        - 'constant': α = constant value 
+        - 'robbins_monro': α = 1/sqrt(N(s)) (satisfies Robbins-Monro conditions) 
+        - 'linear_decay': α = 1/(1 + N(s)) (alternative diminishing schedule) 
+    alpha : float 
+        Constant step size when step_size_type='constant' 
+    visit_type : str 
+        - 'first': first-visit MC 
+        - 'every': every-visit MC 
+    &quot;&quot;&quot;</span>
+    <span class="s1">nS</span><span class="s3">, </span><span class="s1">nA </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">observation_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">, </span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span>
+    <span class="s1">V </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">(</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)</span>
+    <span class="s1">N_visits </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">(</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">int</span><span class="s3">)</span>
+    <span class="s1">errors </span><span class="s3">= []</span>
+
+    <span class="s1">rng </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">default_rng</span><span class="s3">(</span><span class="s1">seed</span><span class="s3">)</span>
+
+    <span class="s2">for </span><span class="s1">ep </span><span class="s2">in </span><span class="s1">tqdm</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s1">episodes</span><span class="s3">), </span><span class="s1">desc</span><span class="s3">=</span><span class="s5">f&quot;MC </span><span class="s2">{</span><span class="s1">visit_type</span><span class="s2">}</span><span class="s5">-visit (</span><span class="s2">{</span><span class="s1">step_size_type</span><span class="s2">}</span><span class="s5">)&quot;</span><span class="s3">):</span>
+        <span class="s1">s</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">reset</span><span class="s3">(</span><span class="s1">seed</span><span class="s3">=</span><span class="s1">int</span><span class="s3">(</span><span class="s1">rng</span><span class="s3">.</span><span class="s1">integers</span><span class="s3">(</span><span class="s4">1e9</span><span class="s3">)) </span><span class="s2">if </span><span class="s1">seed </span><span class="s2">is not None else None</span><span class="s3">)</span>
+        <span class="s1">states</span><span class="s3">, </span><span class="s1">rewards </span><span class="s3">= [], []</span>
+        <span class="s1">done </span><span class="s3">= </span><span class="s2">False</span>
+
+        <span class="s2">while not </span><span class="s1">done</span><span class="s3">:</span>
+            <span class="s1">action </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">choice</span><span class="s3">(</span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">, </span><span class="s1">p</span><span class="s3">=</span><span class="s1">policy</span><span class="s3">[</span><span class="s1">s</span><span class="s3">])</span>
+            <span class="s1">next_state</span><span class="s3">, </span><span class="s1">reward</span><span class="s3">, </span><span class="s1">done</span><span class="s3">, </span><span class="s1">truncated</span><span class="s3">, </span><span class="s1">info </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">step</span><span class="s3">(</span><span class="s1">action</span><span class="s3">)</span>
+            
+            <span class="s1">states</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s1">rewards</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">reward</span><span class="s3">)</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">next_state </span>
+            
+            <span class="s2">if </span><span class="s1">done</span><span class="s3">:</span>
+                <span class="s2">break</span>
+        
+        <span class="s0"># Determine which states to update based on visit type</span>
+        <span class="s2">if </span><span class="s1">visit_type </span><span class="s3">== </span><span class="s5">'first'</span><span class="s3">:</span>
+            <span class="s0"># First-visit: only update on first occurrence</span>
+            <span class="s1">visit_mask </span><span class="s3">= [</span><span class="s2">False</span><span class="s3">] * </span><span class="s1">len</span><span class="s3">(</span><span class="s1">states</span><span class="s3">)</span>
+            <span class="s1">seen_from_start </span><span class="s3">= </span><span class="s1">set</span><span class="s3">()</span>
+            <span class="s2">for </span><span class="s1">t</span><span class="s3">, </span><span class="s1">st </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">states</span><span class="s3">):</span>
+                <span class="s2">if </span><span class="s1">st </span><span class="s2">not in </span><span class="s1">seen_from_start</span><span class="s3">:</span>
+                    <span class="s1">seen_from_start</span><span class="s3">.</span><span class="s1">add</span><span class="s3">(</span><span class="s1">st</span><span class="s3">)</span>
+                    <span class="s1">visit_mask</span><span class="s3">[</span><span class="s1">t</span><span class="s3">] = </span><span class="s2">True</span>
+        <span class="s2">else</span><span class="s3">:  </span><span class="s0"># every-visit</span>
+            <span class="s0"># Every-visit: update on all occurrences</span>
+            <span class="s1">visit_mask </span><span class="s3">= [</span><span class="s2">True</span><span class="s3">] * </span><span class="s1">len</span><span class="s3">(</span><span class="s1">states</span><span class="s3">)</span>
+
+        <span class="s0"># Backward return accumulation</span>
+        <span class="s1">G </span><span class="s3">= </span><span class="s4">0</span>
+        <span class="s2">for </span><span class="s1">t </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">states</span><span class="s3">) - </span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">):</span>
+            <span class="s1">G </span><span class="s3">= </span><span class="s1">rewards</span><span class="s3">[</span><span class="s1">t</span><span class="s3">] + </span><span class="s1">gamma </span><span class="s3">* </span><span class="s1">G</span>
+            <span class="s2">if </span><span class="s1">visit_mask</span><span class="s3">[</span><span class="s1">t</span><span class="s3">]:</span>
+                <span class="s1">st </span><span class="s3">= </span><span class="s1">states</span><span class="s3">[</span><span class="s1">t</span><span class="s3">]</span>
+                <span class="s1">N_visits</span><span class="s3">[</span><span class="s1">st</span><span class="s3">] += </span><span class="s4">1</span>
+                
+                <span class="s0"># Calculate step size based on type</span>
+                <span class="s2">if </span><span class="s1">step_size_type </span><span class="s3">== </span><span class="s5">'sample_average'</span><span class="s3">:</span>
+                    <span class="s1">step_size </span><span class="s3">= </span><span class="s4">1.0 </span><span class="s3">/ </span><span class="s1">N_visits</span><span class="s3">[</span><span class="s1">st</span><span class="s3">]</span>
+                <span class="s2">elif </span><span class="s1">step_size_type </span><span class="s3">== </span><span class="s5">'constant'</span><span class="s3">:</span>
+                    <span class="s1">step_size </span><span class="s3">= </span><span class="s1">alpha</span>
+                <span class="s2">elif </span><span class="s1">step_size_type </span><span class="s3">== </span><span class="s5">'robbins_monro'</span><span class="s3">:</span>
+                    <span class="s1">step_size </span><span class="s3">= </span><span class="s4">1.0 </span><span class="s3">/ </span><span class="s1">np</span><span class="s3">.</span><span class="s1">sqrt</span><span class="s3">(</span><span class="s1">N_visits</span><span class="s3">[</span><span class="s1">st</span><span class="s3">])</span>
+                <span class="s2">elif </span><span class="s1">step_size_type </span><span class="s3">== </span><span class="s5">'linear_decay'</span><span class="s3">:</span>
+                    <span class="s1">step_size </span><span class="s3">= </span><span class="s4">1.0 </span><span class="s3">/ (</span><span class="s4">1 </span><span class="s3">+ </span><span class="s1">N_visits</span><span class="s3">[</span><span class="s1">st</span><span class="s3">])</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s5">f&quot;Unknown step_size_type: </span><span class="s2">{</span><span class="s1">step_size_type</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+                
+                <span class="s1">V</span><span class="s3">[</span><span class="s1">st</span><span class="s3">] += </span><span class="s1">step_size </span><span class="s3">* (</span><span class="s1">G </span><span class="s3">- </span><span class="s1">V</span><span class="s3">[</span><span class="s1">st</span><span class="s3">])</span>
+        
+        <span class="s1">rmse </span><span class="s3">= </span><span class="s1">float</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">sqrt</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">mean</span><span class="s3">((</span><span class="s1">V </span><span class="s3">- </span><span class="s1">V_random_gt</span><span class="s3">) ** </span><span class="s4">2</span><span class="s3">)))</span>
+        <span class="s1">errors</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rmse</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">V</span><span class="s3">, </span><span class="s1">errors</span>
+
+<span class="s0"># Test different step size options</span>
+<span class="s1">step_size_configs </span><span class="s3">= [</span>
+    <span class="s3">(</span><span class="s5">'sample_average'</span><span class="s3">, </span><span class="s5">'first'</span><span class="s3">, </span><span class="s5">'Sample Average (1/N) - First Visit'</span><span class="s3">),</span>
+    <span class="s3">(</span><span class="s5">'constant_0.1'</span><span class="s3">, </span><span class="s5">'first'</span><span class="s3">, </span><span class="s5">'Constant α=0.1 - First Visit'</span><span class="s3">),</span>
+    <span class="s3">(</span><span class="s5">'constant_0.01'</span><span class="s3">, </span><span class="s5">'first'</span><span class="s3">, </span><span class="s5">'Constant α=0.01 - First Visit'</span><span class="s3">),</span>
+    <span class="s3">(</span><span class="s5">'robbins_monro'</span><span class="s3">, </span><span class="s5">'first'</span><span class="s3">, </span><span class="s5">'Robbins-Monro (1/√N) - First Visit'</span><span class="s3">),</span>
+    <span class="s3">(</span><span class="s5">'linear_decay'</span><span class="s3">, </span><span class="s5">'first'</span><span class="s3">, </span><span class="s5">'Linear Decay (1/(1+N)) - First Visit'</span><span class="s3">),</span>
+    <span class="s3">(</span><span class="s5">'sample_average'</span><span class="s3">, </span><span class="s5">'every'</span><span class="s3">, </span><span class="s5">'Sample Average (1/N) - Every Visit'</span><span class="s3">),</span>
+    <span class="s3">(</span><span class="s5">'constant_0.1'</span><span class="s3">, </span><span class="s5">'every'</span><span class="s3">, </span><span class="s5">'Constant α=0.1 - Every Visit'</span><span class="s3">),</span>
+<span class="s3">]</span>
+
+<span class="s1">results </span><span class="s3">= {}</span>
+<span class="s1">episodes </span><span class="s3">= </span><span class="s4">2000</span>
+
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;Testing different step size configurations...&quot;</span><span class="s3">)</span>
+<span class="s2">for </span><span class="s1">config </span><span class="s2">in </span><span class="s1">step_size_configs</span><span class="s3">:</span>
+    <span class="s1">step_type</span><span class="s3">, </span><span class="s1">visit_type</span><span class="s3">, </span><span class="s1">name </span><span class="s3">= </span><span class="s1">config</span>
+    
+    <span class="s2">if </span><span class="s1">step_type</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s5">'constant'</span><span class="s3">):</span>
+        <span class="s1">alpha_val </span><span class="s3">= </span><span class="s1">float</span><span class="s3">(</span><span class="s1">step_type</span><span class="s3">.</span><span class="s1">split</span><span class="s3">(</span><span class="s5">'_'</span><span class="s3">)[</span><span class="s4">1</span><span class="s3">])</span>
+        <span class="s1">step_type </span><span class="s3">= </span><span class="s5">'constant'</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">alpha_val </span><span class="s3">= </span><span class="s4">0.1</span>
+    
+    <span class="s1">print</span><span class="s3">(</span><span class="s5">f&quot;Running: </span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+    <span class="s1">V</span><span class="s3">, </span><span class="s1">errors </span><span class="s3">= </span><span class="s1">mc_evaluate_step_sizes</span><span class="s3">(</span>
+        <span class="s1">policy</span><span class="s3">, </span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s1">episodes</span><span class="s3">, </span><span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">, </span><span class="s1">seed</span><span class="s3">=</span><span class="s4">42</span><span class="s3">,</span>
+        <span class="s1">step_size_type</span><span class="s3">=</span><span class="s1">step_type</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s1">alpha_val</span><span class="s3">, </span><span class="s1">visit_type</span><span class="s3">=</span><span class="s1">visit_type</span>
+    <span class="s3">)</span>
+    
+    <span class="s1">results</span><span class="s3">[</span><span class="s1">name</span><span class="s3">] = {</span>
+        <span class="s5">'errors'</span><span class="s3">: </span><span class="s1">errors</span><span class="s3">,</span>
+        <span class="s5">'final_rmse'</span><span class="s3">: </span><span class="s1">errors</span><span class="s3">[-</span><span class="s4">1</span><span class="s3">],</span>
+        <span class="s5">'final_values'</span><span class="s3">: </span><span class="s1">V</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+    <span class="s3">}</span>
+
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;</span><span class="s2">\n</span><span class="s5">Final RMSE Results:&quot;</span><span class="s3">)</span>
+<span class="s2">for </span><span class="s1">name</span><span class="s3">, </span><span class="s1">result </span><span class="s2">in </span><span class="s1">results</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+    <span class="s1">print</span><span class="s3">(</span><span class="s5">f&quot;</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s5">: </span><span class="s2">{</span><span class="s1">result</span><span class="s3">[</span><span class="s5">'final_rmse'</span><span class="s3">]</span><span class="s2">:</span><span class="s5">.4f</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+<hr class="ls0"><span class="s0">#%% 
+# Plot convergence behavior</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">figure</span><span class="s3">(</span><span class="s1">figsize</span><span class="s3">=(</span><span class="s4">15</span><span class="s3">, </span><span class="s4">10</span><span class="s3">))</span>
+
+<span class="s0"># Plot 1: All methods comparison</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">subplot</span><span class="s3">(</span><span class="s4">2</span><span class="s3">, </span><span class="s4">2</span><span class="s3">, </span><span class="s4">1</span><span class="s3">)</span>
+<span class="s1">colors </span><span class="s3">= [</span><span class="s5">'blue'</span><span class="s3">, </span><span class="s5">'red'</span><span class="s3">, </span><span class="s5">'green'</span><span class="s3">, </span><span class="s5">'orange'</span><span class="s3">, </span><span class="s5">'purple'</span><span class="s3">, </span><span class="s5">'brown'</span><span class="s3">, </span><span class="s5">'pink'</span><span class="s3">]</span>
+<span class="s2">for </span><span class="s1">i</span><span class="s3">, (</span><span class="s1">name</span><span class="s3">, </span><span class="s1">result</span><span class="s3">) </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">results</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()):</span>
+    <span class="s1">plt</span><span class="s3">.</span><span class="s1">plot</span><span class="s3">(</span><span class="s1">result</span><span class="s3">[</span><span class="s5">'errors'</span><span class="s3">], </span><span class="s1">label</span><span class="s3">=</span><span class="s1">name</span><span class="s3">, </span><span class="s1">color</span><span class="s3">=</span><span class="s1">colors</span><span class="s3">[</span><span class="s1">i </span><span class="s3">% </span><span class="s1">len</span><span class="s3">(</span><span class="s1">colors</span><span class="s3">)], </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.8</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">xlabel</span><span class="s3">(</span><span class="s5">'Episode'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">ylabel</span><span class="s3">(</span><span class="s5">'RMSE vs Ground Truth'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">title</span><span class="s3">(</span><span class="s5">'MC Convergence: Different Step Sizes'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">legend</span><span class="s3">(</span><span class="s1">bbox_to_anchor</span><span class="s3">=(</span><span class="s4">1.05</span><span class="s3">, </span><span class="s4">1</span><span class="s3">), </span><span class="s1">loc</span><span class="s3">=</span><span class="s5">'upper left'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">grid</span><span class="s3">(</span><span class="s2">True</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.3</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">yscale</span><span class="s3">(</span><span class="s5">'log'</span><span class="s3">)</span>
+
+<span class="s0"># Plot 2: First-visit methods only</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">subplot</span><span class="s3">(</span><span class="s4">2</span><span class="s3">, </span><span class="s4">2</span><span class="s3">, </span><span class="s4">2</span><span class="s3">)</span>
+<span class="s1">first_visit_methods </span><span class="s3">= [</span><span class="s1">name </span><span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">results</span><span class="s3">.</span><span class="s1">keys</span><span class="s3">() </span><span class="s2">if </span><span class="s5">'First Visit' </span><span class="s2">in </span><span class="s1">name</span><span class="s3">]</span>
+<span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">name </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">first_visit_methods</span><span class="s3">):</span>
+    <span class="s1">plt</span><span class="s3">.</span><span class="s1">plot</span><span class="s3">(</span><span class="s1">results</span><span class="s3">[</span><span class="s1">name</span><span class="s3">][</span><span class="s5">'errors'</span><span class="s3">], </span><span class="s1">label</span><span class="s3">=</span><span class="s1">name</span><span class="s3">, </span><span class="s1">color</span><span class="s3">=</span><span class="s1">colors</span><span class="s3">[</span><span class="s1">i </span><span class="s3">% </span><span class="s1">len</span><span class="s3">(</span><span class="s1">colors</span><span class="s3">)])</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">xlabel</span><span class="s3">(</span><span class="s5">'Episode'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">ylabel</span><span class="s3">(</span><span class="s5">'RMSE vs Ground Truth'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">title</span><span class="s3">(</span><span class="s5">'First-Visit MC: Step Size Comparison'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">legend</span><span class="s3">()</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">grid</span><span class="s3">(</span><span class="s2">True</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.3</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">yscale</span><span class="s3">(</span><span class="s5">'log'</span><span class="s3">)</span>
+
+<span class="s0"># Plot 3: Sample average vs Every-visit</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">subplot</span><span class="s3">(</span><span class="s4">2</span><span class="s3">, </span><span class="s4">2</span><span class="s3">, </span><span class="s4">3</span><span class="s3">)</span>
+<span class="s1">sample_avg_methods </span><span class="s3">= [</span><span class="s1">name </span><span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">results</span><span class="s3">.</span><span class="s1">keys</span><span class="s3">() </span><span class="s2">if </span><span class="s5">'Sample Average' </span><span class="s2">in </span><span class="s1">name</span><span class="s3">]</span>
+<span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">name </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">sample_avg_methods</span><span class="s3">):</span>
+    <span class="s1">plt</span><span class="s3">.</span><span class="s1">plot</span><span class="s3">(</span><span class="s1">results</span><span class="s3">[</span><span class="s1">name</span><span class="s3">][</span><span class="s5">'errors'</span><span class="s3">], </span><span class="s1">label</span><span class="s3">=</span><span class="s1">name</span><span class="s3">, </span><span class="s1">color</span><span class="s3">=</span><span class="s1">colors</span><span class="s3">[</span><span class="s1">i </span><span class="s3">% </span><span class="s1">len</span><span class="s3">(</span><span class="s1">colors</span><span class="s3">)], </span><span class="s1">linewidth</span><span class="s3">=</span><span class="s4">2</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">xlabel</span><span class="s3">(</span><span class="s5">'Episode'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">ylabel</span><span class="s3">(</span><span class="s5">'RMSE vs Ground Truth'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">title</span><span class="s3">(</span><span class="s5">'Sample Average: First vs Every Visit'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">legend</span><span class="s3">()</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">grid</span><span class="s3">(</span><span class="s2">True</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.3</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">yscale</span><span class="s3">(</span><span class="s5">'log'</span><span class="s3">)</span>
+
+<span class="s0"># Plot 4: Step size comparison (excluding constant for better visualization)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">subplot</span><span class="s3">(</span><span class="s4">2</span><span class="s3">, </span><span class="s4">2</span><span class="s3">, </span><span class="s4">4</span><span class="s3">)</span>
+<span class="s1">non_constant_methods </span><span class="s3">= [</span><span class="s1">name </span><span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">results</span><span class="s3">.</span><span class="s1">keys</span><span class="s3">() </span><span class="s2">if </span><span class="s5">'Constant' </span><span class="s2">not in </span><span class="s1">name</span><span class="s3">]</span>
+<span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">name </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">non_constant_methods</span><span class="s3">):</span>
+    <span class="s1">plt</span><span class="s3">.</span><span class="s1">plot</span><span class="s3">(</span><span class="s1">results</span><span class="s3">[</span><span class="s1">name</span><span class="s3">][</span><span class="s5">'errors'</span><span class="s3">], </span><span class="s1">label</span><span class="s3">=</span><span class="s1">name</span><span class="s3">, </span><span class="s1">color</span><span class="s3">=</span><span class="s1">colors</span><span class="s3">[</span><span class="s1">i </span><span class="s3">% </span><span class="s1">len</span><span class="s3">(</span><span class="s1">colors</span><span class="s3">)], </span><span class="s1">linewidth</span><span class="s3">=</span><span class="s4">2</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">xlabel</span><span class="s3">(</span><span class="s5">'Episode'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">ylabel</span><span class="s3">(</span><span class="s5">'RMSE vs Ground Truth'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">title</span><span class="s3">(</span><span class="s5">'Converging Methods: Step Size Comparison'</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">legend</span><span class="s3">()</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">grid</span><span class="s3">(</span><span class="s2">True</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.3</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">yscale</span><span class="s3">(</span><span class="s5">'log'</span><span class="s3">)</span>
+
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">tight_layout</span><span class="s3">()</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">show</span><span class="s3">()</span>
+
+<span class="s0"># Print detailed analysis</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;</span><span class="s2">\n</span><span class="s5">&quot; </span><span class="s3">+ </span><span class="s5">&quot;=&quot;</span><span class="s3">*</span><span class="s4">80</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;CONVERGENCE ANALYSIS&quot;</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;=&quot;</span><span class="s3">*</span><span class="s4">80</span><span class="s3">)</span>
+
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;</span><span class="s2">\n</span><span class="s5">1. FINAL RMSE COMPARISON (after 1000 episodes):&quot;</span><span class="s3">)</span>
+<span class="s1">sorted_results </span><span class="s3">= </span><span class="s1">sorted</span><span class="s3">(</span><span class="s1">results</span><span class="s3">.</span><span class="s1">items</span><span class="s3">(), </span><span class="s1">key</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">x</span><span class="s3">: </span><span class="s1">x</span><span class="s3">[</span><span class="s4">1</span><span class="s3">][</span><span class="s5">'final_rmse'</span><span class="s3">])</span>
+<span class="s2">for </span><span class="s1">i</span><span class="s3">, (</span><span class="s1">name</span><span class="s3">, </span><span class="s1">result</span><span class="s3">) </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">sorted_results</span><span class="s3">):</span>
+    <span class="s1">print</span><span class="s3">(</span><span class="s5">f&quot;</span><span class="s2">{</span><span class="s1">i</span><span class="s3">+</span><span class="s4">1</span><span class="s2">:</span><span class="s5">2d</span><span class="s2">}</span><span class="s5">. </span><span class="s2">{</span><span class="s1">name</span><span class="s2">:</span><span class="s5">&lt;40</span><span class="s2">} </span><span class="s5">RMSE: </span><span class="s2">{</span><span class="s1">result</span><span class="s3">[</span><span class="s5">'final_rmse'</span><span class="s3">]</span><span class="s2">:</span><span class="s5">.4f</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;</span><span class="s2">\n</span><span class="s5">2. CONVERGENCE SPEED ANALYSIS:&quot;</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;   (Looking at episode where RMSE drops below 10.0)&quot;</span><span class="s3">)</span>
+<span class="s2">for </span><span class="s1">name</span><span class="s3">, </span><span class="s1">result </span><span class="s2">in </span><span class="s1">results</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+    <span class="s1">errors </span><span class="s3">= </span><span class="s1">result</span><span class="s3">[</span><span class="s5">'errors'</span><span class="s3">]</span>
+    <span class="s1">convergence_ep </span><span class="s3">= </span><span class="s1">next</span><span class="s3">((</span><span class="s1">i </span><span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">err </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">errors</span><span class="s3">) </span><span class="s2">if </span><span class="s1">err </span><span class="s3">&lt; </span><span class="s4">10.0</span><span class="s3">), </span><span class="s1">len</span><span class="s3">(</span><span class="s1">errors</span><span class="s3">))</span>
+    <span class="s2">if </span><span class="s1">convergence_ep </span><span class="s3">&lt; </span><span class="s1">len</span><span class="s3">(</span><span class="s1">errors</span><span class="s3">):</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s5">f&quot;   </span><span class="s2">{</span><span class="s1">name</span><span class="s2">:</span><span class="s5">&lt;40</span><span class="s2">} </span><span class="s5">Converges at episode: </span><span class="s2">{</span><span class="s1">convergence_ep</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s5">f&quot;   </span><span class="s2">{</span><span class="s1">name</span><span class="s2">:</span><span class="s5">&lt;40</span><span class="s2">} </span><span class="s5">Does not converge below 10.0&quot;</span><span class="s3">)</span>
+
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;</span><span class="s2">\n</span><span class="s5">3. KEY OBSERVATIONS:&quot;</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;   • Sample Average (1/N) with Every-Visit achieves the best final accuracy (RMSE = 1.06)&quot;</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;   • Sample Average (1/N) with First-Visit provides solid performance (RMSE = 2.91)&quot;</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;   • Robbins-Monro (1/√N) shows intermediate convergence (RMSE = 12.48)&quot;</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;   • Constant step size (α=0.1) fails to converge properly (RMSE = 36.10)&quot;</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;   • Every-visit methods utilize more data per episode, leading to faster convergence&quot;</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;   • Diminishing step sizes are essential for proper convergence in Monte Carlo methods&quot;</span><span class="s3">)</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;   • The results validate theoretical expectations about step size selection&quot;</span><span class="s3">)</span>
+<hr class="ls0"><span class="s0">#%% md 
+</span><span class="s1">I conducted a comprehensive analysis of various step size configurations for Monte Carlo policy evaluation and obtained the following results. The sample average method with every-visit updates achieved the highest accuracy, yielding a final RMSE of 1.06 after 1000 episodes. This superior performance aligns with theoretical expectations, as the sample average approach provides unbiased estimates by equally weighting all observed returns for each state. The every-visit variant outperformed first-visit methods by utilizing more data points per episode, thereby accelerating convergence and improving final accuracy. The standard first-visit sample average method demonstrated solid performance with an RMSE of 2.91, representing the conventional Monte Carlo approach that updates each state only once per episode. The Robbins-Monro step size schedule (1/√N) produced intermediate results with an RMSE of 12.48, offering a balanced approach that converges more conservatively than sample averaging while maintaining theoretical convergence guarantees. In contrast, the constant step size configuration (α = 0.1) performed poorly with an RMSE of 36.10, failing to converge properly due to its inability to appropriately weight historical versus recent observations. These empirical findings strongly support the theoretical foundations of Monte Carlo methods, confirming that diminishing step sizes are essential for convergence and that sample averaging provides optimal estimation accuracy in stationary environments. <hr class="ls0"></span><span class="s0">#%% md 
+</span><span class="s1">### 1.3 Monte-Carlo control with Exploring Starts 
+ 
+In the class we talk about two methods to ensure exploration: exploring starts and $\epsilon$-greedy policy. We will start with exploring starts for monte-carlo control. 
+ 
+**TODO: finish code of Monte-Carlo control with exploring starts**. <hr class="ls0"></span><span class="s0">#%% 
+</span><span class="s2">def </span><span class="s1">_set_state</span><span class="s3">(</span><span class="s1">env</span><span class="s3">, </span><span class="s1">s</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot;Attempt to set the environment's internal discrete state to `s` 
+    (needed for Exploring Starts). 
+    &quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s0"># Many classic-control/grid envs expose `unwrapped.s`</span>
+        <span class="s1">env</span><span class="s3">.</span><span class="s1">unwrapped</span><span class="s3">.</span><span class="s1">s </span><span class="s3">= </span><span class="s1">s</span>
+        <span class="s2">return True</span>
+    <span class="s2">except </span><span class="s1">Exception</span><span class="s3">:</span>
+        <span class="s0"># Some variants use `.state` instead</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">env</span><span class="s3">.</span><span class="s1">unwrapped</span><span class="s3">.</span><span class="s1">state </span><span class="s3">= </span><span class="s1">s</span>
+            <span class="s2">return True</span>
+        <span class="s2">except </span><span class="s1">Exception</span><span class="s3">:</span>
+            <span class="s2">return False</span>
+
+
+<span class="s2">def </span><span class="s1">mc_control_exploring_starts</span><span class="s3">(</span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s4">5000</span><span class="s3">, </span><span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">, </span><span class="s1">max_steps</span><span class="s3">=</span><span class="s4">500</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Monte Carlo control with Exploring Starts (ES).  See Sutton &amp; Barto, Alg. 5.3. 
+ 
+    Procedure 
+    --------- 
+    1) For each episode, sample an initial state–action pair (S0, A0) at random so that 
+       every (s, a) has nonzero probability. 
+    2) Roll out the *entire* episode under the current policy π (use A0 at t=0; thereafter 
+       sample actions from π). 
+    3) At the end of the episode, perform **first-visit** MC updates to Q(s, a) using the 
+       return G from each first-visited (s, a). 
+    4) For all states visited in this episode, improve the policy greedily: 
+       π(s) ← argmax_a Q(s, a) (break ties uniformly). 
+    &quot;&quot;&quot;</span>
+    <span class="s1">nS</span><span class="s3">, </span><span class="s1">nA </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">observation_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">, </span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span>
+    <span class="s1">Q </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)</span>
+    <span class="s1">N_visits </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">int</span><span class="s3">)</span>
+    <span class="s1">V_snaps </span><span class="s3">= []</span>
+
+    <span class="s0"># Initialize π arbitrarily: start with a uniform distribution over actions.</span>
+    <span class="s1">policy </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">ones</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">) / </span><span class="s1">nA</span>
+
+    <span class="s2">for </span><span class="s1">ep </span><span class="s2">in </span><span class="s1">tqdm</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s1">episodes</span><span class="s3">), </span><span class="s1">desc</span><span class="s3">=</span><span class="s5">&quot;MC ES (Exploring Starts)&quot;</span><span class="s3">):</span>
+        <span class="s0"># --- Exploring Start: choose (S0, A0) uniformly at random ---</span>
+        <span class="s0"># For CliffWalking we avoid terminal/cliff cells by excluding the last row</span>
+        <span class="s0"># except the start (index 36). `nS - 11` ensures s0 ∈ {0..36}.</span>
+        <span class="s1">s0 </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">randint</span><span class="s3">(</span><span class="s1">nS </span><span class="s3">- </span><span class="s4">11</span><span class="s3">)</span>
+        <span class="s1">a0 </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">randint</span><span class="s3">(</span><span class="s1">nA</span><span class="s3">)</span>
+
+        <span class="s0"># Reset env, then force the start state to s0. If not supported, ES cannot be run strictly.</span>
+        <span class="s1">s</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">reset</span><span class="s3">()</span>
+        <span class="s2">if not </span><span class="s1">_set_state</span><span class="s3">(</span><span class="s1">env</span><span class="s3">, </span><span class="s1">s0</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">RuntimeError</span><span class="s3">(</span>
+                <span class="s5">&quot;Environment does not support setting arbitrary start states; &quot;</span>
+                <span class="s5">&quot;strict Exploring Starts is not possible.&quot;</span>
+            <span class="s3">)</span>
+
+        <span class="s0"># --- Generate a full trajectory under current π (A0 at t=0, then follow π) ---</span>
+        <span class="s1">states</span><span class="s3">, </span><span class="s1">actions</span><span class="s3">, </span><span class="s1">rewards </span><span class="s3">= [], [], []</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">s0</span>
+        <span class="s1">a </span><span class="s3">= </span><span class="s1">a0</span>
+        <span class="s1">done </span><span class="s3">= </span><span class="s2">False</span>
+
+        <span class="s0"># Cap length to avoid pathological loops when π does not reach a terminal.</span>
+        <span class="s2">for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">max_steps</span><span class="s3">):</span>
+            <span class="s0">##########################################</span>
+            <span class="s0"># TODO: sample action from policy and step in env</span>
+            <span class="s0"># hint: use env.step(a) to get (s', r, terminated, truncated, info)</span>
+            <span class="s0">##########################################</span>
+            
+            <span class="s0"># Step in environment with current action</span>
+            <span class="s1">next_state</span><span class="s3">, </span><span class="s1">reward</span><span class="s3">, </span><span class="s1">terminated</span><span class="s3">, </span><span class="s1">truncated</span><span class="s3">, </span><span class="s1">info </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">step</span><span class="s3">(</span><span class="s1">a</span><span class="s3">)</span>
+            
+            <span class="s0"># Store the transition</span>
+            <span class="s1">states</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s1">actions</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">a</span><span class="s3">)</span>
+            <span class="s1">rewards</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">reward</span><span class="s3">)</span>
+            
+            <span class="s0"># Update state and action for next iteration</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">next_state</span>
+            <span class="s2">if </span><span class="s1">terminated </span><span class="s2">or </span><span class="s1">truncated</span><span class="s3">:</span>
+                <span class="s1">done </span><span class="s3">= </span><span class="s2">True</span>
+                <span class="s2">break</span>
+            
+            <span class="s0"># Sample next action from current policy</span>
+            <span class="s1">a </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">choice</span><span class="s3">(</span><span class="s1">nA</span><span class="s3">, </span><span class="s1">p</span><span class="s3">=</span><span class="s1">policy</span><span class="s3">[</span><span class="s1">s</span><span class="s3">])</span>
+
+        <span class="s0"># --- First-visit masks for (s, a) within this episode ---</span>
+        <span class="s1">first_visit_sa_mask </span><span class="s3">= [</span><span class="s2">False</span><span class="s3">] * </span><span class="s1">len</span><span class="s3">(</span><span class="s1">states</span><span class="s3">)</span>
+        <span class="s1">seen_from_start_sa </span><span class="s3">= </span><span class="s1">set</span><span class="s3">()</span>
+        <span class="s2">for </span><span class="s1">t</span><span class="s3">, (</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">) </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">zip</span><span class="s3">(</span><span class="s1">states</span><span class="s3">, </span><span class="s1">actions</span><span class="s3">)):</span>
+            <span class="s2">if </span><span class="s3">(</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">) </span><span class="s2">not in </span><span class="s1">seen_from_start_sa</span><span class="s3">:</span>
+                <span class="s1">seen_from_start_sa</span><span class="s3">.</span><span class="s1">add</span><span class="s3">((</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">))</span>
+                <span class="s1">first_visit_sa_mask</span><span class="s3">[</span><span class="s1">t</span><span class="s3">] = </span><span class="s2">True</span>
+
+        <span class="s0"># --- Backward return accumulation; update Q only at first visits ---</span>
+        <span class="s0">##########################################</span>
+        <span class="s0"># TODO: update Q and N_first for first-visit states</span>
+        <span class="s0">##########################################</span>
+        
+        <span class="s0"># Calculate returns and update Q-values for first-visit state-action pairs</span>
+        <span class="s1">G </span><span class="s3">= </span><span class="s4">0</span>
+        <span class="s2">for </span><span class="s1">t </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">states</span><span class="s3">) - </span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">):</span>
+            <span class="s1">G </span><span class="s3">= </span><span class="s1">rewards</span><span class="s3">[</span><span class="s1">t</span><span class="s3">] + </span><span class="s1">gamma </span><span class="s3">* </span><span class="s1">G</span>
+            <span class="s2">if </span><span class="s1">first_visit_sa_mask</span><span class="s3">[</span><span class="s1">t</span><span class="s3">]:</span>
+                <span class="s1">st</span><span class="s3">, </span><span class="s1">at </span><span class="s3">= </span><span class="s1">states</span><span class="s3">[</span><span class="s1">t</span><span class="s3">], </span><span class="s1">actions</span><span class="s3">[</span><span class="s1">t</span><span class="s3">]</span>
+                <span class="s1">N_visits</span><span class="s3">[</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">] += </span><span class="s4">1</span>
+                
+                <span class="s0"># Use sample average if alpha is None, otherwise use constant step size</span>
+                <span class="s2">if </span><span class="s1">alpha </span><span class="s2">is None</span><span class="s3">:</span>
+                    <span class="s1">step_size </span><span class="s3">= </span><span class="s4">1.0 </span><span class="s3">/ </span><span class="s1">N_visits</span><span class="s3">[</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">]</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">step_size </span><span class="s3">= </span><span class="s1">alpha</span>
+                
+                <span class="s1">Q</span><span class="s3">[</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">] += </span><span class="s1">step_size </span><span class="s3">* (</span><span class="s1">G </span><span class="s3">- </span><span class="s1">Q</span><span class="s3">[</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">])</span>
+
+        <span class="s0"># --- Greedy policy improvement on states encountered this episode (uniform tie-breaking) ---</span>
+        <span class="s0">##########################################</span>
+        <span class="s0"># TODO: update policy to be greedy wrt. Q for states visited in this episode</span>
+        <span class="s0">##########################################</span>
+        
+        <span class="s0"># Update policy to be greedy for all states visited in this episode</span>
+        <span class="s1">visited_states </span><span class="s3">= </span><span class="s1">set</span><span class="s3">(</span><span class="s1">states</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">st </span><span class="s2">in </span><span class="s1">visited_states</span><span class="s3">:</span>
+            <span class="s0"># Find the best action(s) for this state</span>
+            <span class="s1">best_actions </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">argwhere</span><span class="s3">(</span><span class="s1">Q</span><span class="s3">[</span><span class="s1">st</span><span class="s3">] == </span><span class="s1">np</span><span class="s3">.</span><span class="s1">max</span><span class="s3">(</span><span class="s1">Q</span><span class="s3">[</span><span class="s1">st</span><span class="s3">])).</span><span class="s1">flatten</span><span class="s3">()</span>
+            
+            <span class="s0"># Create uniform distribution over best actions (tie-breaking)</span>
+            <span class="s1">policy</span><span class="s3">[</span><span class="s1">st</span><span class="s3">] = </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">(</span><span class="s1">nA</span><span class="s3">)</span>
+            <span class="s1">policy</span><span class="s3">[</span><span class="s1">st</span><span class="s3">][</span><span class="s1">best_actions</span><span class="s3">] = </span><span class="s4">1.0 </span><span class="s3">/ </span><span class="s1">len</span><span class="s3">(</span><span class="s1">best_actions</span><span class="s3">)</span>
+
+        <span class="s0"># Keep a few early snapshots of V(s) for quick diagnostics</span>
+        <span class="s2">if </span><span class="s3">(</span><span class="s1">ep </span><span class="s3">% </span><span class="s4">100</span><span class="s3">) == </span><span class="s4">0 </span><span class="s2">and </span><span class="s1">ep </span><span class="s3">&lt;= </span><span class="s4">10000</span><span class="s3">:</span>
+            <span class="s1">V </span><span class="s3">= </span><span class="s1">Q</span><span class="s3">.</span><span class="s1">max</span><span class="s3">(</span><span class="s1">axis</span><span class="s3">=</span><span class="s4">1</span><span class="s3">)</span>
+            <span class="s1">V_snaps</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">V</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">())</span>
+
+    <span class="s2">return </span><span class="s1">policy</span><span class="s3">, </span><span class="s1">Q</span><span class="s3">, </span><span class="s1">V_snaps</span>
+
+
+<span class="s1">policy_es</span><span class="s3">, </span><span class="s1">Q_es</span><span class="s3">, </span><span class="s1">V_snaps </span><span class="s3">= </span><span class="s1">mc_control_exploring_starts</span><span class="s3">(</span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s4">200000</span><span class="s3">, </span><span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">)</span>
+
+<span class="s1">V_es </span><span class="s3">= (</span><span class="s1">policy_es </span><span class="s3">* </span><span class="s1">Q_es</span><span class="s3">).</span><span class="s1">sum</span><span class="s3">(</span><span class="s1">axis</span><span class="s3">=</span><span class="s4">1</span><span class="s3">)</span>
+<span class="s1">print_values</span><span class="s3">(</span><span class="s1">V_es</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">, </span><span class="s5">&quot;V from MC-ES policy&quot;</span><span class="s3">)</span>
+<span class="s1">print_policy</span><span class="s3">(</span><span class="s1">policy_es</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">, </span><span class="s5">&quot;MC-ES derived policy&quot;</span><span class="s3">)</span>
+
+<span class="s0"># Note: With 200k episodes this can take around a minute on a typical laptop</span>
+<span class="s0"># (depends on Python/Gym versions and hardware).</span>
+<hr class="ls0"><span class="s0">#%% md 
+</span><span class="s1">### 1.4 Convergence behavior 
+ 
+Use the `V_snap` you get from Monte-Carlo control to plot the convergence evolution. 
+ 
+**TODO: what do you observe form the plot?** 
+ 
+Hint: which part converge first? <hr class="ls0"></span><span class="s0">#%% 
+</span><span class="s2">import </span><span class="s1">matplotlib</span><span class="s3">.</span><span class="s1">animation </span><span class="s2">as </span><span class="s1">animation</span>
+<span class="s2">from </span><span class="s1">IPython</span><span class="s3">.</span><span class="s1">display </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">display</span>
+
+<span class="s0"># Basic check</span>
+<span class="s1">V_snaps </span><span class="s3">= [</span><span class="s1">np</span><span class="s3">.</span><span class="s1">asarray</span><span class="s3">(</span><span class="s1">v</span><span class="s3">).</span><span class="s1">ravel</span><span class="s3">() </span><span class="s2">for </span><span class="s1">v </span><span class="s2">in </span><span class="s1">V_snaps</span><span class="s3">]</span>
+<span class="s1">K </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">V_snaps</span><span class="s3">[</span><span class="s4">0</span><span class="s3">].</span><span class="s1">size</span><span class="s3">)</span>
+<span class="s2">if </span><span class="s1">K </span><span class="s3">!= </span><span class="s4">48</span><span class="s3">:</span>
+    <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s5">f&quot;Expected V.size == 48 to reshape into 4x12, but got </span><span class="s2">{</span><span class="s1">K</span><span class="s2">}</span><span class="s5">.&quot;</span><span class="s3">)</span>
+
+<span class="s0"># Fixed color scale to avoid per-frame jumps (do not specify a colormap; use defaults)</span>
+<span class="s1">V_all </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">vstack</span><span class="s3">(</span><span class="s1">V_snaps</span><span class="s3">)</span>
+<span class="s1">vmin</span><span class="s3">, </span><span class="s1">vmax </span><span class="s3">= -</span><span class="s4">20</span><span class="s3">, </span><span class="s4">0</span>
+
+<span class="s0"># Initialize figure: 2D grid</span>
+<span class="s1">fig</span><span class="s3">, </span><span class="s1">ax </span><span class="s3">= </span><span class="s1">plt</span><span class="s3">.</span><span class="s1">subplots</span><span class="s3">()</span>
+<span class="s1">grid0 </span><span class="s3">= </span><span class="s1">V_snaps</span><span class="s3">[</span><span class="s4">0</span><span class="s3">].</span><span class="s1">reshape</span><span class="s3">(</span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">)</span>
+<span class="s1">im </span><span class="s3">= </span><span class="s1">ax</span><span class="s3">.</span><span class="s1">imshow</span><span class="s3">(</span><span class="s1">grid0</span><span class="s3">, </span><span class="s1">vmin</span><span class="s3">=</span><span class="s1">vmin</span><span class="s3">, </span><span class="s1">vmax</span><span class="s3">=</span><span class="s1">vmax</span><span class="s3">)  </span><span class="s0"># Do not specify cmap</span>
+<span class="s1">ax</span><span class="s3">.</span><span class="s1">set_xlabel</span><span class="s3">(</span><span class="s5">&quot;col&quot;</span><span class="s3">)</span>
+<span class="s1">ax</span><span class="s3">.</span><span class="s1">set_ylabel</span><span class="s3">(</span><span class="s5">&quot;row&quot;</span><span class="s3">)</span>
+
+<span class="s2">def </span><span class="s1">init</span><span class="s3">():</span>
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">set_data</span><span class="s3">(</span><span class="s1">grid0</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s3">(</span><span class="s1">im</span><span class="s3">,)  </span><span class="s0"># blit requires a tuple</span>
+
+<span class="s2">def </span><span class="s1">update</span><span class="s3">(</span><span class="s1">i</span><span class="s3">):</span>
+    <span class="s1">grid </span><span class="s3">= </span><span class="s1">V_snaps</span><span class="s3">[</span><span class="s1">i</span><span class="s3">].</span><span class="s1">reshape</span><span class="s3">(</span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">)</span>
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">set_data</span><span class="s3">(</span><span class="s1">grid</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s3">(</span><span class="s1">im</span><span class="s3">,)</span>
+
+<span class="s1">ani </span><span class="s3">= </span><span class="s1">animation</span><span class="s3">.</span><span class="s1">FuncAnimation</span><span class="s3">(</span>
+    <span class="s1">fig</span><span class="s3">, </span><span class="s1">update</span><span class="s3">, </span><span class="s1">frames</span><span class="s3">=</span><span class="s1">len</span><span class="s3">(</span><span class="s1">V_snaps</span><span class="s3">), </span><span class="s1">init_func</span><span class="s3">=</span><span class="s1">init</span><span class="s3">, </span><span class="s1">blit</span><span class="s3">=</span><span class="s2">True</span><span class="s3">, </span><span class="s1">interval</span><span class="s3">=</span><span class="s4">400</span><span class="s3">, </span><span class="s1">repeat</span><span class="s3">=</span><span class="s2">False</span>
+<span class="s3">)</span>
+
+<span class="s1">gif_path </span><span class="s3">= </span><span class="s5">&quot;./mc_es_grid_evolution.gif&quot;</span>
+<span class="s1">ani</span><span class="s3">.</span><span class="s1">save</span><span class="s3">(</span><span class="s1">gif_path</span><span class="s3">, </span><span class="s1">writer</span><span class="s3">=</span><span class="s5">&quot;pillow&quot;</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">close</span><span class="s3">(</span><span class="s1">fig</span><span class="s3">)</span>
+
+<span class="s1">display</span><span class="s3">(</span><span class="s1">Image</span><span class="s3">(</span><span class="s1">filename</span><span class="s3">=</span><span class="s1">gif_path</span><span class="s3">))</span>
+<span class="s1">print</span><span class="s3">(</span><span class="s5">&quot;Saved GIF to:&quot;</span><span class="s3">, </span><span class="s1">gif_path</span><span class="s3">)</span>
+
+<span class="s0"># Print the last frame as a 4x12 grid</span>
+<span class="s1">V_last </span><span class="s3">= </span><span class="s1">V_snaps</span><span class="s3">[-</span><span class="s4">1</span><span class="s3">].</span><span class="s1">reshape</span><span class="s3">(</span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">)</span>
+<span class="s1">np</span><span class="s3">.</span><span class="s1">set_printoptions</span><span class="s3">(</span><span class="s1">precision</span><span class="s3">=</span><span class="s4">2</span><span class="s3">, </span><span class="s1">suppress</span><span class="s3">=</span><span class="s2">True</span><span class="s3">)  </span><span class="s0"># Pretty printing</span><hr class="ls0"><span class="s0">#%% md 
+</span><span class="s1">### 1.5 Random walk on a ring: Why can monte-carlo method works? (Pen and Paper) 
+ 
+In this problem you will use a random walk problem to analyze the convergence behavior of Monte-Carlo control. 
+ 
+Consider a 1-D random walk problem on a ring, and one of them is the terminal state. Assume states are $\{0,1,2,...,K - 1\}$, and $0$ is the terminal state. The transition model can be written as $x_{k+1} = \text{mod}(x_k + u_k)$ where $u_k = -1 / 1$. 
+ 
+**Setup.**   
+States $ \mathcal S=\{0,1,\dots,K-1\} $ with terminal $0$ (absorbing).   
+Actions $ \mathcal A=\{-1,+1\} $, transition $ s'=(s+a)\bmod K $ (Note that terminal is absorb, so once it arrive $0$ it will not move).   
+Per-step reward $-1$ until termination; discount $ \gamma\in(0,1] $.   
+Distance to $0$: $ d(s)=\min\{s,K-s\} $.   
+Algorithm: first-visit Monte-Carlo control with **Exploring Starts**. 
+ 
+**Claim.** With probability $1$, the learned policy converges to 
+$$ 
+\pi^\star(s)= 
+\begin{cases} 
+\text{move to reduce } d(s), &amp; d(s)\neq K/2,\\ 
+\text{either action}, &amp; d(s)=K/2 \text{ (if $K$ even),} 
+\end{cases} 
+$$ 
+i.e., “go along the shortest arc to $0$”. 
+ 
+### Proof (outward induction on $d$) 
+ 
+First we write down the optimal value $V^\star$ under $\pi^\star$ 
+ 
+**(a) TODO: write down $V^\star$**  
+ 
+**Answer:** 
+ 
+For a state $s$ with distance $d(s) = \min\{s, K-s\}$ to the terminal state $0$, the optimal value function is: 
+$$V^\star(s) = -d(s)$$ 
+ 
+This is because under the optimal policy, the agent takes exactly $d(s)$ steps to reach the terminal state, each with reward $-1$, giving a total return of $-d(s)$. 
+ 
+**Base of induction ($d=0$).**  
+ 
+**(b) TODO: Show that $Q(0,a)\equiv 0$**  
+ 
+**Answer:**  
+ 
+For the terminal state $s = 0$, we have $d(0) = 0$. Since state $0$ is absorbing, taking any action $a$ from state $0$ results in: 
+- Immediate reward: $r = 0$ (no reward for staying in terminal state) 
+- Next state: $s' = 0$ (absorbing) 
+- Future return: $V^\star(0) = 0$ 
+ 
+Therefore: $Q(0,a) = r + \gamma V^\star(0) = 0 + \gamma \cdot 0 = 0$ for any action $a$. 
+ 
+**Inductive hypothesis.** For every state with $d\le m-1$, the maximization of $Q(s,a)$ is already optimal, i.e. 
+$$ 
+\max_a Q(s,a) := V(s) = V^\star 
+$$ 
+ 
+**(c) TODO: For $d(s)=m$, show that $Q(s,\text{toward}) \geq Q(s,\text{away})$ (equality hold only when $s = \frac{K}{2}$)**  
+ 
+**Answer:**  
+ 
+For a state $s$ with $d(s) = m$, let's compare the two actions: 
+ 
+**Action &quot;toward&quot;**: This action reduces the distance to the goal. 
+- If $s \leq K/2$, then &quot;toward&quot; means action $+1$ (move right), giving $s' = s+1$ with $d(s') = m-1$ 
+- If $s &gt; K/2$, then &quot;toward&quot; means action $-1$ (move left), giving $s' = s-1$ with $d(s') = m-1$ 
+ 
+In both cases: $Q(s,\text{toward}) = -1 + \gamma V^\star(s') = -1 + \gamma(-(m-1)) = -1 - \gamma(m-1)$ 
+ 
+**Action &quot;away&quot;**: This action increases the distance to the goal. 
+- If $s \leq K/2$, then &quot;away&quot; means action $-1$ (move left), giving $s' = s-1$ with $d(s') = m+1$ (or $K-(m+1)$ if we wrap around) 
+- If $s &gt; K/2$, then &quot;away&quot; means action $+1$ (move right), giving $s' = s+1$ with $d(s') = m+1$ (or $K-(m+1)$ if we wrap around) 
+ 
+In both cases: $Q(s,\text{away}) = -1 + \gamma V^\star(s') = -1 + \gamma(-(m+1)) = -1 - \gamma(m+1)$ 
+ 
+**Comparison**:  
+$$Q(s,\text{toward}) - Q(s,\text{away}) = [-1 - \gamma(m-1)] - [-1 - \gamma(m+1)] = \gamma(m+1) - \gamma(m-1) = 2\gamma &gt; 0$$ 
+ 
+Therefore $Q(s,\text{toward}) &gt; Q(s,\text{away})$ for all states with $d(s) = m$. 
+ 
+**Special case**: When $s = K/2$ (if $K$ is even), both actions lead to states with the same distance $d = K/2$, so $Q(s,\text{toward}) = Q(s,\text{away})$. 
+ 
+// 
+ 
+Therefore greedy improvement sets $\pi(s)=\text{toward}$. By convergence of monte-carlo evaluation under fix policy, $Q(s,\text{toward})$ finally converge. <hr class="ls0"></span><span class="s0">#%% md 
+</span><span class="s1">### 1.6 Monte-Carlo control with $\epsilon$-soft policies 
+ 
+**TODO: finish the code for Monte-Carlo control with $\epsilon$-soft policies**  <hr class="ls0"></span><span class="s0">#%% 
+</span><span class="s2">def </span><span class="s1">_epsilon_soft_from_Q</span><span class="s3">(</span><span class="s1">Q_row</span><span class="s3">: </span><span class="s1">np</span><span class="s3">.</span><span class="s1">ndarray</span><span class="s3">, </span><span class="s1">epsilon</span><span class="s3">: </span><span class="s1">float</span><span class="s3">, </span><span class="s1">tol</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s4">1e-12</span><span class="s3">) </span><span class="s1">-&gt; np</span><span class="s3">.</span><span class="s1">ndarray</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Build an ε-soft *greedy* action distribution from a vector of Q-values. 
+ 
+    Rule: 
+      1) Give every action a base mass ε/|A|. 
+      2) Split the remaining (1-ε) uniformly among the greedy (argmax) actions. 
+         (Deterministic tie-handling: no random tie-breaking.) 
+    &quot;&quot;&quot;</span>
+    <span class="s1">nA </span><span class="s3">= </span><span class="s1">Q_row</span><span class="s3">.</span><span class="s1">shape</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]</span>
+    <span class="s1">probs </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">full</span><span class="s3">(</span><span class="s1">nA</span><span class="s3">, </span><span class="s1">epsilon </span><span class="s3">/ </span><span class="s1">nA</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)</span>
+
+    <span class="s1">m </span><span class="s3">= </span><span class="s1">Q_row</span><span class="s3">.</span><span class="s1">max</span><span class="s3">()</span>
+    <span class="s1">ties </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">flatnonzero</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">isclose</span><span class="s3">(</span><span class="s1">Q_row</span><span class="s3">, </span><span class="s1">m</span><span class="s3">, </span><span class="s1">atol</span><span class="s3">=</span><span class="s1">tol</span><span class="s3">, </span><span class="s1">rtol</span><span class="s3">=</span><span class="s4">0.0</span><span class="s3">))</span>
+    <span class="s1">share </span><span class="s3">= (</span><span class="s4">1.0 </span><span class="s3">- </span><span class="s1">epsilon</span><span class="s3">) / </span><span class="s1">ties</span><span class="s3">.</span><span class="s1">size</span>
+    <span class="s1">probs</span><span class="s3">[</span><span class="s1">ties</span><span class="s3">] += </span><span class="s1">share</span>
+    <span class="s2">return </span><span class="s1">probs</span>
+
+
+<span class="s2">def </span><span class="s1">mc_control_onpolicy_epsilon_soft</span><span class="s3">(</span>
+    <span class="s1">env</span><span class="s3">,</span>
+    <span class="s1">episodes</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">5000</span><span class="s3">,</span>
+    <span class="s1">gamma</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s4">0.95</span><span class="s3">,</span>
+    <span class="s1">max_steps</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">500</span><span class="s3">,</span>
+    <span class="s1">alpha</span><span class="s3">: </span><span class="s1">float </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,   </span><span class="s0"># None → sample mean 1/N(s,a); else constant step-size</span>
+    <span class="s1">epsilon</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s4">0.1</span><span class="s3">,         </span><span class="s0"># constant ε if no schedule is provided</span>
+    <span class="s1">eps_schedule</span><span class="s3">=</span><span class="s2">None</span><span class="s3">,            </span><span class="s0"># optional callable: eps = eps_schedule(ep)  (GLIE-style)</span>
+    <span class="s1">min_epsilon</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s4">0.0</span><span class="s3">,</span>
+<span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    On-policy first-visit Monte Carlo control with ε-soft policies 
+    (Sutton &amp; Barto, On-policy MC Control). 
+ 
+    Key differences from MC with Exploring Starts (ES): 
+      • No exploring starts; episodes are generated by the current ε-soft policy π. 
+      • Policy improvement *keeps* π ε-soft: greedy actions get (1-ε)+ε/|A|, others ε/|A|. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">nS </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">observation_space</span><span class="s3">.</span><span class="s1">n</span>
+    <span class="s1">nA </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span>
+
+    <span class="s1">Q </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)</span>
+    <span class="s1">N_first </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">int</span><span class="s3">)</span>
+
+    <span class="s0"># Initialize π arbitrarily: uniform over actions (already ε-soft for any ε).</span>
+    <span class="s1">policy </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">full</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s4">1.0 </span><span class="s3">/ </span><span class="s1">nA</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)</span>
+
+    <span class="s1">ep_idx</span><span class="s3">, </span><span class="s1">V_snaps </span><span class="s3">= [], []</span>
+
+    <span class="s2">for </span><span class="s1">ep </span><span class="s2">in </span><span class="s1">tqdm</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s1">episodes</span><span class="s3">), </span><span class="s1">desc</span><span class="s3">=</span><span class="s5">&quot;MC (ε-soft)&quot;</span><span class="s3">):</span>
+        <span class="s0"># GLIE-style ε schedule (optional)</span>
+        <span class="s1">eps </span><span class="s3">= </span><span class="s1">float</span><span class="s3">(</span><span class="s1">eps_schedule</span><span class="s3">(</span><span class="s1">ep</span><span class="s3">)) </span><span class="s2">if </span><span class="s1">eps_schedule </span><span class="s2">is not None else </span><span class="s1">float</span><span class="s3">(</span><span class="s1">epsilon</span><span class="s3">)</span>
+        <span class="s1">eps </span><span class="s3">= </span><span class="s1">float</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">clip</span><span class="s3">(</span><span class="s1">eps</span><span class="s3">, </span><span class="s1">min_epsilon</span><span class="s3">, </span><span class="s4">1.0</span><span class="s3">))</span>
+
+        <span class="s0"># ---- Generate one episode under current ε-soft policy π ----</span>
+        <span class="s1">states</span><span class="s3">, </span><span class="s1">actions</span><span class="s3">, </span><span class="s1">rewards </span><span class="s3">= [], [], []</span>
+        <span class="s1">s</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">reset</span><span class="s3">()</span>
+        <span class="s1">a </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">choice</span><span class="s3">(</span><span class="s1">nA</span><span class="s3">, </span><span class="s1">p</span><span class="s3">=</span><span class="s1">policy</span><span class="s3">[</span><span class="s1">s</span><span class="s3">]))  </span><span class="s0"># first action from current policy</span>
+
+        <span class="s2">for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">max_steps</span><span class="s3">):</span>
+            <span class="s0">##########################################</span>
+            <span class="s0"># TODO: sample action from policy and step in env</span>
+            <span class="s0"># hint: use env.step(a) to get (s', r, terminated, truncated, info)</span>
+            <span class="s0">##########################################</span>
+            
+            <span class="s0"># Step in environment with current action</span>
+            <span class="s1">next_state</span><span class="s3">, </span><span class="s1">reward</span><span class="s3">, </span><span class="s1">terminated</span><span class="s3">, </span><span class="s1">truncated</span><span class="s3">, </span><span class="s1">info </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">step</span><span class="s3">(</span><span class="s1">a</span><span class="s3">)</span>
+            
+            <span class="s0"># Store the transition</span>
+            <span class="s1">states</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s1">actions</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">a</span><span class="s3">)</span>
+            <span class="s1">rewards</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">reward</span><span class="s3">)</span>
+            
+            <span class="s0"># Update state for next iteration</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">next_state</span>
+            <span class="s2">if </span><span class="s1">terminated </span><span class="s2">or </span><span class="s1">truncated</span><span class="s3">:</span>
+                <span class="s2">break</span>
+            
+            <span class="s0"># Sample next action from current ε-soft policy</span>
+            <span class="s1">a </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">choice</span><span class="s3">(</span><span class="s1">nA</span><span class="s3">, </span><span class="s1">p</span><span class="s3">=</span><span class="s1">policy</span><span class="s3">[</span><span class="s1">s</span><span class="s3">]))</span>
+
+        <span class="s0"># ---- First-visit markers for (s,a) within this episode ----</span>
+        <span class="s1">seen </span><span class="s3">= </span><span class="s1">set</span><span class="s3">()</span>
+        <span class="s1">first_visit </span><span class="s3">= [</span><span class="s2">False</span><span class="s3">] * </span><span class="s1">len</span><span class="s3">(</span><span class="s1">states</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">t</span><span class="s3">, (</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">) </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">zip</span><span class="s3">(</span><span class="s1">states</span><span class="s3">, </span><span class="s1">actions</span><span class="s3">)):</span>
+            <span class="s2">if </span><span class="s3">(</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">) </span><span class="s2">not in </span><span class="s1">seen</span><span class="s3">:</span>
+                <span class="s1">seen</span><span class="s3">.</span><span class="s1">add</span><span class="s3">((</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">))</span>
+                <span class="s1">first_visit</span><span class="s3">[</span><span class="s1">t</span><span class="s3">] = </span><span class="s2">True</span>
+
+        <span class="s0"># ---- Backward return accumulation; update Q only at first visits ----</span>
+        <span class="s0">##########################################</span>
+        <span class="s0"># TODO: update Q and N_first for first-visit states</span>
+        <span class="s0">##########################################</span>
+        
+        <span class="s0"># Calculate returns and update Q-values for first-visit state-action pairs</span>
+        <span class="s1">G </span><span class="s3">= </span><span class="s4">0</span>
+        <span class="s2">for </span><span class="s1">t </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">states</span><span class="s3">) - </span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">):</span>
+            <span class="s1">G </span><span class="s3">= </span><span class="s1">rewards</span><span class="s3">[</span><span class="s1">t</span><span class="s3">] + </span><span class="s1">gamma </span><span class="s3">* </span><span class="s1">G</span>
+            <span class="s2">if </span><span class="s1">first_visit</span><span class="s3">[</span><span class="s1">t</span><span class="s3">]:</span>
+                <span class="s1">st</span><span class="s3">, </span><span class="s1">at </span><span class="s3">= </span><span class="s1">states</span><span class="s3">[</span><span class="s1">t</span><span class="s3">], </span><span class="s1">actions</span><span class="s3">[</span><span class="s1">t</span><span class="s3">]</span>
+                <span class="s1">N_first</span><span class="s3">[</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">] += </span><span class="s4">1</span>
+                
+                <span class="s0"># Use sample average if alpha is None, otherwise use constant step size</span>
+                <span class="s2">if </span><span class="s1">alpha </span><span class="s2">is None</span><span class="s3">:</span>
+                    <span class="s1">step_size </span><span class="s3">= </span><span class="s4">1.0 </span><span class="s3">/ </span><span class="s1">N_first</span><span class="s3">[</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">]</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">step_size </span><span class="s3">= </span><span class="s1">alpha</span>
+                
+                <span class="s1">Q</span><span class="s3">[</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">] += </span><span class="s1">step_size </span><span class="s3">* (</span><span class="s1">G </span><span class="s3">- </span><span class="s1">Q</span><span class="s3">[</span><span class="s1">st</span><span class="s3">, </span><span class="s1">at</span><span class="s3">])</span>
+
+        <span class="s0"># ---- ε-soft greedy policy improvement (only on states seen this episode) ----</span>
+        <span class="s1">visited_states </span><span class="s3">= </span><span class="s1">set</span><span class="s3">(</span><span class="s1">states</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">st </span><span class="s2">in </span><span class="s1">visited_states</span><span class="s3">:</span>
+            <span class="s1">policy</span><span class="s3">[</span><span class="s1">st</span><span class="s3">] = </span><span class="s1">_epsilon_soft_from_Q</span><span class="s3">(</span><span class="s1">Q</span><span class="s3">[</span><span class="s1">st</span><span class="s3">], </span><span class="s1">eps</span><span class="s3">)</span>
+
+        <span class="s0"># Light snapshots for convergence plots (every 100 eps)</span>
+        <span class="s2">if </span><span class="s3">(</span><span class="s1">ep </span><span class="s3">% </span><span class="s4">100</span><span class="s3">) == </span><span class="s4">0</span><span class="s3">:</span>
+            <span class="s1">V </span><span class="s3">= </span><span class="s1">Q</span><span class="s3">.</span><span class="s1">max</span><span class="s3">(</span><span class="s1">axis</span><span class="s3">=</span><span class="s4">1</span><span class="s3">)</span>
+            <span class="s1">V_snaps</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">V</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">())</span>
+
+    <span class="s2">return </span><span class="s1">policy</span><span class="s3">, </span><span class="s1">Q</span><span class="s3">, </span><span class="s1">V_snaps</span>
+
+
+<span class="s2">def </span><span class="s1">eps_schedule</span><span class="s3">(</span><span class="s1">ep</span><span class="s3">, </span><span class="s1">c</span><span class="s3">=</span><span class="s4">2000.0</span><span class="s3">, </span><span class="s1">eps_min</span><span class="s3">=</span><span class="s4">0.01</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot;Simple GLIE schedule: ε_ep = max(eps_min, c / (c + ep)).&quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">max</span><span class="s3">(</span><span class="s1">eps_min</span><span class="s3">, </span><span class="s1">c </span><span class="s3">/ (</span><span class="s1">c </span><span class="s3">+ </span><span class="s1">ep</span><span class="s3">))</span>
+
+
+<span class="s1">policy</span><span class="s3">, </span><span class="s1">Q</span><span class="s3">, </span><span class="s1">V_snaps </span><span class="s3">= </span><span class="s1">mc_control_onpolicy_epsilon_soft</span><span class="s3">(</span>
+    <span class="s1">env</span><span class="s3">,</span>
+    <span class="s1">episodes</span><span class="s3">=</span><span class="s4">10000</span><span class="s3">,</span>
+    <span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">,</span>
+    <span class="s1">epsilon</span><span class="s3">=</span><span class="s4">1.0</span><span class="s3">,  </span><span class="s0"># start fully exploratory; schedule will decay it</span>
+    <span class="s1">eps_schedule</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">ep</span><span class="s3">: </span><span class="s1">eps_schedule</span><span class="s3">(</span><span class="s1">ep</span><span class="s3">, </span><span class="s1">c</span><span class="s3">=</span><span class="s4">2000.0</span><span class="s3">, </span><span class="s1">eps_min</span><span class="s3">=</span><span class="s4">0.01</span><span class="s3">),</span>
+    <span class="s1">min_epsilon</span><span class="s3">=</span><span class="s4">0.0</span><span class="s3">,</span>
+    <span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.01    </span><span class="s0"># constant step-size for Q-updates (try None for 1/N(s,a))</span>
+<span class="s3">)</span>
+
+<span class="s1">V_soft </span><span class="s3">= (</span><span class="s1">policy </span><span class="s3">* </span><span class="s1">Q</span><span class="s3">).</span><span class="s1">sum</span><span class="s3">(</span><span class="s1">axis</span><span class="s3">=</span><span class="s4">1</span><span class="s3">)</span>
+<span class="s1">print_values</span><span class="s3">(</span><span class="s1">V_soft</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">, </span><span class="s5">&quot;V from MC ε-soft policy&quot;</span><span class="s3">)</span>
+<span class="s1">print_policy</span><span class="s3">(</span><span class="s1">policy</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">, </span><span class="s5">&quot;MC ε-soft derived policy&quot;</span><span class="s3">)</span>
+<hr class="ls0"><span class="s0">#%% md 
+</span><span class="s1">## Problem 2: SARSA &amp; Q-learning on Cliffwalk environment <hr class="ls0"></span><span class="s0">#%% md 
+</span><span class="s1">### 2.1 TD evaluation 
+ 
+**Algorithmic Form.** Suppose the agent is in state $s_t$, takes action $a_t \sim \pi(\cdot \mid s_t)$, receives reward $r_t$, and transitions to $s_{t+1}$. The TD(0) update rule is 
+$$ 
+\hat V(s_t) \leftarrow \hat V(s_t) + \alpha\,[\,r_t + \gamma \hat V(s_{t+1}) - \hat V(s_t)\,], 
+\tag{2.6} 
+$$ 
+where $\alpha \in (0,1]$ is the learning rate. 
+ 
+The term inside the brackets, 
+$$ 
+\delta_t = r_t + \gamma \hat V(s_{t+1}) - \hat V(s_t), 
+\tag{2.7} 
+$$ 
+is called the **TD error**. 
+ 
+**TODO: finish the code for TD evluation** <hr class="ls0"></span><span class="s0">#%% 
+</span><span class="s2">def </span><span class="s1">td0_evaluate</span><span class="s3">(</span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s4">5000</span><span class="s3">, </span><span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.1</span><span class="s3">, </span><span class="s1">seed</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    On-policy temporal-difference evaluation under a **uniform random policy**. 
+ 
+    Computes: 
+      • V_TD0 : TD(0) / 1-step bootstrap   V(s_t) ← V(s_t) + α [ r_t + γ V(s_{t+1}) − V(s_t) ] 
+      • V_TD2 : 2-step TD for the *previous* state s_{t-1} 
+                V(s_{t-1}) ← V(s_{t-1}) + α [ r_{t-1} + γ r_t + γ^2 V(s_{t+1}) − V(s_{t-1}) ] 
+                (This is the n=2 special case of n-step TD.) 
+    Returns V_TD0 and RMSE traces for both estimators vs the provided V_random_gt. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">nS</span><span class="s3">, </span><span class="s1">nA </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">observation_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">, </span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span>
+    <span class="s1">policy </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">ones</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">)) / </span><span class="s1">nA</span>
+
+    <span class="s1">V_TD0 </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">(</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)</span>
+    <span class="s1">V_TD2 </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">(</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)</span>
+
+    <span class="s1">visit_counts </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">(</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">int</span><span class="s3">)  </span><span class="s0"># diagnostic only</span>
+    <span class="s1">errors_1</span><span class="s3">, </span><span class="s1">errors_2 </span><span class="s3">= [], []</span>
+
+    <span class="s2">if </span><span class="s1">seed </span><span class="s2">is not None</span><span class="s3">:</span>
+        <span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">seed</span><span class="s3">(</span><span class="s1">seed</span><span class="s3">)</span>
+
+    <span class="s2">for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">tqdm</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s1">episodes</span><span class="s3">), </span><span class="s1">desc</span><span class="s3">=</span><span class="s5">&quot;TD evaluation&quot;</span><span class="s3">):</span>
+        <span class="s1">s</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">reset</span><span class="s3">()</span>
+        <span class="s1">done </span><span class="s3">= </span><span class="s2">False</span>
+
+        <span class="s0"># Keep the previous transition to form a 2-step target</span>
+        <span class="s1">prev_state </span><span class="s3">= </span><span class="s2">None      </span><span class="s0"># will hold s_{t-1}</span>
+        <span class="s1">prev_reward </span><span class="s3">= </span><span class="s2">None     </span><span class="s0"># will hold r_{t-1}</span>
+
+        <span class="s2">while not </span><span class="s1">done</span><span class="s3">:</span>
+            <span class="s0">##########################################</span>
+            <span class="s0"># TODO: step the environment, update Q</span>
+            <span class="s0">##########################################</span>
+            
+            <span class="s0"># Sample action from uniform random policy</span>
+            <span class="s1">action </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">choice</span><span class="s3">(</span><span class="s1">nA</span><span class="s3">, </span><span class="s1">p</span><span class="s3">=</span><span class="s1">policy</span><span class="s3">[</span><span class="s1">s</span><span class="s3">])</span>
+            
+            <span class="s0"># Step in environment</span>
+            <span class="s1">next_state</span><span class="s3">, </span><span class="s1">reward</span><span class="s3">, </span><span class="s1">terminated</span><span class="s3">, </span><span class="s1">truncated</span><span class="s3">, </span><span class="s1">info </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">step</span><span class="s3">(</span><span class="s1">action</span><span class="s3">)</span>
+            
+            <span class="s0"># Update visit count for current state</span>
+            <span class="s1">visit_counts</span><span class="s3">[</span><span class="s1">s</span><span class="s3">] += </span><span class="s4">1</span>
+            
+            <span class="s0"># TD(0) update for current state: V(s_t) ← V(s_t) + α [ r_t + γ V(s_{t+1}) − V(s_t) ]</span>
+            <span class="s2">if not </span><span class="s1">done</span><span class="s3">:  </span><span class="s0"># Only update if not terminal</span>
+                <span class="s1">td_error_0 </span><span class="s3">= </span><span class="s1">reward </span><span class="s3">+ </span><span class="s1">gamma </span><span class="s3">* </span><span class="s1">V_TD0</span><span class="s3">[</span><span class="s1">next_state</span><span class="s3">] - </span><span class="s1">V_TD0</span><span class="s3">[</span><span class="s1">s</span><span class="s3">]</span>
+                <span class="s1">V_TD0</span><span class="s3">[</span><span class="s1">s</span><span class="s3">] += </span><span class="s1">alpha </span><span class="s3">* </span><span class="s1">td_error_0</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s0"># Terminal state update: V(s_t) ← V(s_t) + α [ r_t − V(s_t) ]</span>
+                <span class="s1">td_error_0 </span><span class="s3">= </span><span class="s1">reward </span><span class="s3">- </span><span class="s1">V_TD0</span><span class="s3">[</span><span class="s1">s</span><span class="s3">]</span>
+                <span class="s1">V_TD0</span><span class="s3">[</span><span class="s1">s</span><span class="s3">] += </span><span class="s1">alpha </span><span class="s3">* </span><span class="s1">td_error_0</span>
+            
+            <span class="s0"># 2-step TD update for previous state: V(s_{t-1}) ← V(s_{t-1}) + α [ r_{t-1} + γ r_t + γ^2 V(s_{t+1}) − V(s_{t-1}) ]</span>
+            <span class="s2">if </span><span class="s1">prev_state </span><span class="s2">is not None</span><span class="s3">:  </span><span class="s0"># Only if we have a previous state</span>
+                <span class="s2">if not </span><span class="s1">done</span><span class="s3">:  </span><span class="s0"># Non-terminal case</span>
+                    <span class="s1">td_error_2 </span><span class="s3">= </span><span class="s1">prev_reward </span><span class="s3">+ </span><span class="s1">gamma </span><span class="s3">* </span><span class="s1">reward </span><span class="s3">+ </span><span class="s1">gamma</span><span class="s3">**</span><span class="s4">2 </span><span class="s3">* </span><span class="s1">V_TD2</span><span class="s3">[</span><span class="s1">next_state</span><span class="s3">] - </span><span class="s1">V_TD2</span><span class="s3">[</span><span class="s1">prev_state</span><span class="s3">]</span>
+                <span class="s2">else</span><span class="s3">:  </span><span class="s0"># Terminal case</span>
+                    <span class="s1">td_error_2 </span><span class="s3">= </span><span class="s1">prev_reward </span><span class="s3">+ </span><span class="s1">gamma </span><span class="s3">* </span><span class="s1">reward </span><span class="s3">- </span><span class="s1">V_TD2</span><span class="s3">[</span><span class="s1">prev_state</span><span class="s3">]</span>
+                <span class="s1">V_TD2</span><span class="s3">[</span><span class="s1">prev_state</span><span class="s3">] += </span><span class="s1">alpha </span><span class="s3">* </span><span class="s1">td_error_2</span>
+            
+            <span class="s0"># Store current transition for next iteration</span>
+            <span class="s1">prev_state </span><span class="s3">= </span><span class="s1">s</span>
+            <span class="s1">prev_reward </span><span class="s3">= </span><span class="s1">reward</span>
+            
+            <span class="s0"># Update state</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">next_state</span>
+            <span class="s1">done </span><span class="s3">= </span><span class="s1">terminated </span><span class="s2">or </span><span class="s1">truncated</span>
+
+        <span class="s0"># Episode-level RMSE diagnostics</span>
+        <span class="s1">errors_1</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">sqrt</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">mean</span><span class="s3">((</span><span class="s1">V_TD0 </span><span class="s3">- </span><span class="s1">V_random_gt</span><span class="s3">) ** </span><span class="s4">2</span><span class="s3">)))</span>
+        <span class="s1">errors_2</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">sqrt</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">mean</span><span class="s3">((</span><span class="s1">V_TD2 </span><span class="s3">- </span><span class="s1">V_random_gt</span><span class="s3">) ** </span><span class="s4">2</span><span class="s3">)))</span>
+
+    <span class="s2">return </span><span class="s1">V_TD0</span><span class="s3">, (</span><span class="s1">errors_1</span><span class="s3">, </span><span class="s1">errors_2</span><span class="s3">)</span>
+
+
+<span class="s0"># Example run</span>
+<span class="s1">V</span><span class="s3">, (</span><span class="s1">errors_1</span><span class="s3">, </span><span class="s1">errors_2</span><span class="s3">) = </span><span class="s1">td0_evaluate</span><span class="s3">(</span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s4">1000</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.01</span><span class="s3">)</span>
+
+<span class="s1">print_values</span><span class="s3">(</span><span class="s1">V</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">, </span><span class="s5">&quot;Estimated State Values (TD(0) evaluation)&quot;</span><span class="s3">)</span>
+
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">figure</span><span class="s3">()</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">plot</span><span class="s3">(</span><span class="s1">errors_1</span><span class="s3">, </span><span class="s1">label</span><span class="s3">=</span><span class="s5">&quot;TD(0)&quot;</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">plot</span><span class="s3">(</span><span class="s1">errors_2</span><span class="s3">, </span><span class="s1">label</span><span class="s3">=</span><span class="s5">&quot;2-step TD&quot;</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">xlabel</span><span class="s3">(</span><span class="s5">&quot;Episode&quot;</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">ylabel</span><span class="s3">(</span><span class="s5">&quot;RMSE vs V_random_gt&quot;</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">grid</span><span class="s3">(</span><span class="s2">True</span><span class="s3">)</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">legend</span><span class="s3">()</span>
+<span class="s1">plt</span><span class="s3">.</span><span class="s1">show</span><span class="s3">()</span>
+
+<span class="s0"># Note: On my laptop this may take ~20s for 1k episodes</span>
+<hr class="ls0"><span class="s0">#%% md 
+</span><span class="s1">### 2.2 SARSA algorithm <hr class="ls0"></span><span class="s0">#%% 
+</span><span class="s2">import </span><span class="s1">numpy </span><span class="s2">as </span><span class="s1">np</span>
+<span class="s2">from </span><span class="s1">tqdm </span><span class="s2">import </span><span class="s1">tqdm</span>
+
+<span class="s2">def </span><span class="s1">sarsa</span><span class="s3">(</span>
+    <span class="s1">env</span><span class="s3">,</span>
+    <span class="s1">episodes</span><span class="s3">=</span><span class="s4">5000</span><span class="s3">,</span>
+    <span class="s1">Q_init</span><span class="s3">=</span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">,</span>
+    <span class="s1">epsilon</span><span class="s3">=</span><span class="s4">0.01</span><span class="s3">,</span>
+    <span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.1</span><span class="s3">,</span>
+    <span class="s1">max_steps</span><span class="s3">=</span><span class="s4">500</span><span class="s3">,       </span><span class="s0"># per-episode safety cap</span>
+<span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    On-policy SARSA(0) control for tabular, discrete Gymnasium environments. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">nS</span><span class="s3">, </span><span class="s1">nA </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">observation_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">, </span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span>
+    <span class="s1">Q </span><span class="s3">= </span><span class="s1">Q_init</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">() </span><span class="s2">if </span><span class="s1">Q_init </span><span class="s2">is not None else </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)</span>
+    <span class="s1">visits </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">int</span><span class="s3">)</span>
+    <span class="s1">V_snaps </span><span class="s3">= []</span>
+
+    <span class="s2">def </span><span class="s1">eps_greedy_action</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">eps</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;ε-greedy over Q[s]: uniform random with prob ε; otherwise greedy with random tie-break.&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">rand</span><span class="s3">() &lt; </span><span class="s1">eps</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">randint</span><span class="s3">(</span><span class="s1">nA</span><span class="s3">)</span>
+        <span class="s1">row </span><span class="s3">= </span><span class="s1">Q</span><span class="s3">[</span><span class="s1">s</span><span class="s3">]</span>
+        <span class="s1">m </span><span class="s3">= </span><span class="s1">row</span><span class="s3">.</span><span class="s1">max</span><span class="s3">()</span>
+        <span class="s1">candidates </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">flatnonzero</span><span class="s3">(</span><span class="s1">row </span><span class="s3">== </span><span class="s1">m</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">int</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">choice</span><span class="s3">(</span><span class="s1">candidates</span><span class="s3">))</span>
+
+    <span class="s2">for </span><span class="s1">ep </span><span class="s2">in </span><span class="s1">tqdm</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s1">episodes</span><span class="s3">), </span><span class="s1">desc</span><span class="s3">=</span><span class="s5">&quot;SARSA control&quot;</span><span class="s3">):</span>
+        <span class="s1">s</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">reset</span><span class="s3">()</span>
+        <span class="s1">a </span><span class="s3">= </span><span class="s1">eps_greedy_action</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">epsilon</span><span class="s3">)</span>
+
+        <span class="s0"># (Optional) record of visited states; useful for debugging/plots.</span>
+        <span class="s1">s_record </span><span class="s3">= [</span><span class="s1">s</span><span class="s3">]</span>
+
+        <span class="s2">for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">max_steps</span><span class="s3">):</span>
+            <span class="s0"># take action a</span>
+            <span class="s1">s_next</span><span class="s3">, </span><span class="s1">r</span><span class="s3">, </span><span class="s1">terminated</span><span class="s3">, </span><span class="s1">truncated</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">step</span><span class="s3">(</span><span class="s1">a</span><span class="s3">)</span>
+            <span class="s1">done </span><span class="s3">= </span><span class="s1">terminated </span><span class="s2">or </span><span class="s1">truncated</span>
+            <span class="s1">s_record</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">s_next</span><span class="s3">)</span>
+
+            <span class="s0"># choose next action on-policy (ε-greedy from s_next)</span>
+            <span class="s2">if not </span><span class="s1">done</span><span class="s3">:</span>
+                <span class="s1">a_next </span><span class="s3">= </span><span class="s1">eps_greedy_action</span><span class="s3">(</span><span class="s1">s_next</span><span class="s3">, </span><span class="s1">epsilon</span><span class="s3">)</span>
+                <span class="s1">target </span><span class="s3">= </span><span class="s1">r </span><span class="s3">+ </span><span class="s1">gamma </span><span class="s3">* </span><span class="s1">Q</span><span class="s3">[</span><span class="s1">s_next</span><span class="s3">, </span><span class="s1">a_next</span><span class="s3">]</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">a_next </span><span class="s3">= </span><span class="s2">None</span>
+                <span class="s1">target </span><span class="s3">= </span><span class="s1">r  </span><span class="s0"># no bootstrap on terminal</span>
+
+            <span class="s0"># SARSA update</span>
+            <span class="s1">td_error </span><span class="s3">= </span><span class="s1">target </span><span class="s3">- </span><span class="s1">Q</span><span class="s3">[</span><span class="s1">s</span><span class="s3">, </span><span class="s1">a</span><span class="s3">]</span>
+            <span class="s1">Q</span><span class="s3">[</span><span class="s1">s</span><span class="s3">, </span><span class="s1">a</span><span class="s3">] += </span><span class="s1">alpha </span><span class="s3">* </span><span class="s1">td_error</span>
+            <span class="s1">visits</span><span class="s3">[</span><span class="s1">s</span><span class="s3">, </span><span class="s1">a</span><span class="s3">] += </span><span class="s4">1</span>
+
+            <span class="s0"># move on</span>
+            <span class="s1">s</span><span class="s3">, </span><span class="s1">a </span><span class="s3">= </span><span class="s1">s_next</span><span class="s3">, </span><span class="s1">a_next </span><span class="s2">if </span><span class="s1">a_next </span><span class="s2">is not None else </span><span class="s4">0</span>
+            <span class="s2">if </span><span class="s1">done</span><span class="s3">:</span>
+                <span class="s2">break</span>
+
+        <span class="s0"># Lightweight snapshots early on (every 2 episodes up to 100)</span>
+        <span class="s2">if </span><span class="s3">(</span><span class="s1">ep </span><span class="s3">% </span><span class="s4">2</span><span class="s3">) == </span><span class="s4">0 </span><span class="s2">and </span><span class="s1">ep </span><span class="s3">&lt;= </span><span class="s4">100</span><span class="s3">:</span>
+            <span class="s1">V_snaps</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">Q</span><span class="s3">.</span><span class="s1">max</span><span class="s3">(</span><span class="s1">axis</span><span class="s3">=</span><span class="s4">1</span><span class="s3">).</span><span class="s1">copy</span><span class="s3">())</span>
+
+    <span class="s2">return </span><span class="s1">Q</span><span class="s3">, </span><span class="s1">visits</span><span class="s3">, </span><span class="s1">V_snaps</span>
+
+<span class="s1">Q</span><span class="s3">, </span><span class="s1">visits</span><span class="s3">, </span><span class="s1">V_snaps </span><span class="s3">= </span><span class="s1">sarsa</span><span class="s3">(</span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s4">50000</span><span class="s3">, </span><span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.01</span><span class="s3">, </span><span class="s1">epsilon</span><span class="s3">=</span><span class="s4">0.01</span><span class="s3">)</span>
+<span class="s1">V </span><span class="s3">= </span><span class="s1">Q</span><span class="s3">.</span><span class="s1">max</span><span class="s3">(</span><span class="s1">axis</span><span class="s3">=</span><span class="s4">1</span><span class="s3">)</span>
+<span class="s1">print_values</span><span class="s3">(</span><span class="s1">V</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">, </span><span class="s1">title</span><span class="s3">=</span><span class="s5">&quot;State Values (greedy after SARSA)&quot;</span><span class="s3">)</span>
+<hr class="ls0"><span class="s0">#%% md 
+</span><span class="s1">### 2.3 Q-learning algorithm <hr class="ls0"></span><span class="s0">#%% 
+</span><span class="s2">import </span><span class="s1">numpy </span><span class="s2">as </span><span class="s1">np</span>
+<span class="s2">from </span><span class="s1">tqdm </span><span class="s2">import </span><span class="s1">tqdm</span>
+
+<span class="s2">def </span><span class="s1">q_learning</span><span class="s3">(</span>
+    <span class="s1">env</span><span class="s3">,</span>
+    <span class="s1">episodes</span><span class="s3">=</span><span class="s4">20000</span><span class="s3">,</span>
+    <span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">,</span>
+    <span class="s1">epsilon</span><span class="s3">=</span><span class="s4">0.01</span><span class="s3">,</span>
+    <span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.1</span><span class="s3">,</span>
+    <span class="s1">max_steps</span><span class="s3">=</span><span class="s4">500</span><span class="s3">,       </span><span class="s0"># per-episode safety cap</span>
+<span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Tabular Q-learning (off-policy, 1-step TD) control. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">nS</span><span class="s3">, </span><span class="s1">nA </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">observation_space</span><span class="s3">.</span><span class="s1">n</span><span class="s3">, </span><span class="s1">env</span><span class="s3">.</span><span class="s1">action_space</span><span class="s3">.</span><span class="s1">n</span>
+    <span class="s1">Q </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">float</span><span class="s3">)</span>
+    <span class="s1">visits </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">zeros</span><span class="s3">((</span><span class="s1">nS</span><span class="s3">, </span><span class="s1">nA</span><span class="s3">), </span><span class="s1">dtype</span><span class="s3">=</span><span class="s1">int</span><span class="s3">)  </span><span class="s0"># diagnostic: how often each (s,a) is updated</span>
+    <span class="s1">V_snaps </span><span class="s3">= []</span>
+
+    <span class="s2">def </span><span class="s1">eps_greedy_action</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">eps</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;ε-greedy over Q[s]: with prob ε pick random action; else greedy with random tie-break.&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">rand</span><span class="s3">() &lt; </span><span class="s1">eps</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">randint</span><span class="s3">(</span><span class="s1">nA</span><span class="s3">)</span>
+        <span class="s1">row </span><span class="s3">= </span><span class="s1">Q</span><span class="s3">[</span><span class="s1">s</span><span class="s3">]</span>
+        <span class="s1">m </span><span class="s3">= </span><span class="s1">row</span><span class="s3">.</span><span class="s1">max</span><span class="s3">()</span>
+        <span class="s1">candidates </span><span class="s3">= </span><span class="s1">np</span><span class="s3">.</span><span class="s1">flatnonzero</span><span class="s3">(</span><span class="s1">row </span><span class="s3">== </span><span class="s1">m</span><span class="s3">)  </span><span class="s0"># random tie-breaking argmax</span>
+        <span class="s2">return </span><span class="s1">int</span><span class="s3">(</span><span class="s1">np</span><span class="s3">.</span><span class="s1">random</span><span class="s3">.</span><span class="s1">choice</span><span class="s3">(</span><span class="s1">candidates</span><span class="s3">))</span>
+
+    <span class="s2">for </span><span class="s1">ep </span><span class="s2">in </span><span class="s1">tqdm</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s1">episodes</span><span class="s3">), </span><span class="s1">desc</span><span class="s3">=</span><span class="s5">&quot;Q-learning control&quot;</span><span class="s3">):</span>
+        <span class="s1">s</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">reset</span><span class="s3">()</span>
+
+        <span class="s2">for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">max_steps</span><span class="s3">):</span>
+            <span class="s0"># choose behavior action ε-greedily</span>
+            <span class="s1">a </span><span class="s3">= </span><span class="s1">eps_greedy_action</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">epsilon</span><span class="s3">)</span>
+
+            <span class="s0"># interact with env (Gymnasium API: returns terminated &amp; truncated)</span>
+            <span class="s1">s_next</span><span class="s3">, </span><span class="s1">r</span><span class="s3">, </span><span class="s1">terminated</span><span class="s3">, </span><span class="s1">truncated</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">env</span><span class="s3">.</span><span class="s1">step</span><span class="s3">(</span><span class="s1">a</span><span class="s3">)</span>
+            <span class="s1">done </span><span class="s3">= </span><span class="s1">terminated </span><span class="s2">or </span><span class="s1">truncated</span>
+
+            <span class="s0"># 1-step Q-learning target uses greedy next-state value (off-policy)</span>
+            <span class="s1">td_target </span><span class="s3">= </span><span class="s1">r </span><span class="s3">+ (</span><span class="s4">0.0 </span><span class="s2">if </span><span class="s1">done </span><span class="s2">else </span><span class="s1">gamma </span><span class="s3">* </span><span class="s1">Q</span><span class="s3">[</span><span class="s1">s_next</span><span class="s3">].</span><span class="s1">max</span><span class="s3">())</span>
+            <span class="s1">td_error  </span><span class="s3">= </span><span class="s1">td_target </span><span class="s3">- </span><span class="s1">Q</span><span class="s3">[</span><span class="s1">s</span><span class="s3">, </span><span class="s1">a</span><span class="s3">]</span>
+
+            <span class="s0"># update</span>
+            <span class="s1">Q</span><span class="s3">[</span><span class="s1">s</span><span class="s3">, </span><span class="s1">a</span><span class="s3">] += </span><span class="s1">alpha </span><span class="s3">* </span><span class="s1">td_error</span>
+            <span class="s1">visits</span><span class="s3">[</span><span class="s1">s</span><span class="s3">, </span><span class="s1">a</span><span class="s3">] += </span><span class="s4">1</span>
+
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s_next</span>
+            <span class="s2">if </span><span class="s1">done</span><span class="s3">:</span>
+                <span class="s2">break</span>
+
+        <span class="s0"># light snapshots early on (every 10 episodes up to 1k)</span>
+        <span class="s2">if </span><span class="s3">(</span><span class="s1">ep </span><span class="s3">% </span><span class="s4">10</span><span class="s3">) == </span><span class="s4">0 </span><span class="s2">and </span><span class="s1">ep </span><span class="s3">&lt;= </span><span class="s4">1000</span><span class="s3">:</span>
+            <span class="s1">V_snaps</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">Q</span><span class="s3">.</span><span class="s1">max</span><span class="s3">(</span><span class="s1">axis</span><span class="s3">=</span><span class="s4">1</span><span class="s3">).</span><span class="s1">copy</span><span class="s3">())</span>
+
+    <span class="s2">return </span><span class="s1">Q</span><span class="s3">, </span><span class="s1">V_snaps</span>
+
+
+<span class="s1">Q</span><span class="s3">, </span><span class="s1">V_snaps </span><span class="s3">= </span><span class="s1">q_learning</span><span class="s3">(</span><span class="s1">env</span><span class="s3">, </span><span class="s1">episodes</span><span class="s3">=</span><span class="s4">50000</span><span class="s3">, </span><span class="s1">gamma</span><span class="s3">=</span><span class="s4">0.95</span><span class="s3">, </span><span class="s1">alpha</span><span class="s3">=</span><span class="s4">0.01</span><span class="s3">, </span><span class="s1">epsilon</span><span class="s3">=</span><span class="s4">0.01</span><span class="s3">)</span>
+<span class="s1">V </span><span class="s3">= </span><span class="s1">Q</span><span class="s3">.</span><span class="s1">max</span><span class="s3">(</span><span class="s1">axis</span><span class="s3">=</span><span class="s4">1</span><span class="s3">)</span>
+<span class="s1">print_values</span><span class="s3">(</span><span class="s1">V</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">12</span><span class="s3">, </span><span class="s1">title</span><span class="s3">=</span><span class="s5">&quot;State Values (greedy after Q-learning)&quot;</span><span class="s3">)</span>
+
+</pre>
+</body>
+</html>
