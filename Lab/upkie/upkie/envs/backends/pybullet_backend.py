@@ -22,6 +22,7 @@ except ModuleNotFoundError:
 
 from upkie.config import BULLET_CONFIG, ROBOT_CONFIG
 from upkie.exceptions import MissingOptionalDependency, UpkieRuntimeError
+from upkie.logging import logger
 from upkie.model import Model
 from upkie.utils.external_force import ExternalForce
 from upkie.utils.nested_update import nested_update
@@ -75,6 +76,14 @@ class PyBulletBackend(Backend):
             )
         pybullet_mode = pybullet.GUI if gui else pybullet.DIRECT
         self._bullet = pybullet.connect(pybullet_mode)
+        self.__gui = gui  # Store GUI flag for potential reconnection
+        
+        # Verify connection was successful
+        if self._bullet < 0:
+            raise UpkieRuntimeError(
+                "Failed to connect to PyBullet physics server. "
+                "This may be due to multiple GUI connections or system issues."
+            )
 
         # Disable scene during initialization
         pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_GUI, 0)
@@ -98,40 +107,10 @@ class PyBulletBackend(Backend):
         )
 
         # Initialize model and build joint index mapping
+        self.__model = Model()
         self.__link_index = {"base": -1}
         self.__link_name = {-1: "base"}
-        self.__model = Model()
-        self._joint_indices = {}
-        self._joint_properties = {}
-        for bullet_idx in range(pybullet.getNumJoints(self.__robot_id)):
-            joint_info = pybullet.getJointInfo(self.__robot_id, bullet_idx)
-            joint_name = joint_info[1].decode("utf-8")
-            if joint_name in Model.JOINT_NAMES:
-                self._joint_indices[joint_name] = bullet_idx
-                # Initialize joint properties with defaults
-                joint_props = self.__bullet_config.get(
-                    "joint_properties", {}
-                ).get(joint_name, {})
-                self._joint_properties[joint_name] = {
-                    "friction": joint_props.get("friction", 0.0),
-                    "torque_control_noise": joint_props.get(
-                        "torque_control_noise", 0.0
-                    ),
-                    "torque_measurement_noise": joint_props.get(
-                        "torque_measurement_noise", 0.0
-                    ),
-                }
-                # Disable velocity controllers to enable torque control
-                pybullet.setJointMotorControl2(
-                    self.__robot_id,
-                    bullet_idx,
-                    pybullet.VELOCITY_CONTROL,
-                    force=0,
-                )
-
-            link_name = joint_info[12].decode("utf-8")
-            self.__link_index[link_name] = bullet_idx
-            self.__link_name[bullet_idx] = link_name
+        self._build_joint_indices()
 
         if "imu" not in self.__link_index:
             raise UpkieRuntimeError("Robot does not have a link named 'imu'")
@@ -172,6 +151,50 @@ class PyBulletBackend(Backend):
         self.__external_forces = {}
         self.__nb_substeps = nb_substeps
 
+    def _build_joint_indices(self):
+        r"""!
+        Build joint index mapping for the current robot body.
+        
+        This method should be called after loading or reloading the robot URDF.
+        """
+        # Reset link indices (keep base)
+        self.__link_index = {"base": -1}
+        self.__link_name = {-1: "base"}
+        
+        # Reset joint indices and properties
+        self._joint_indices = {}
+        self._joint_properties = {}
+        
+        for bullet_idx in range(pybullet.getNumJoints(self.__robot_id)):
+            joint_info = pybullet.getJointInfo(self.__robot_id, bullet_idx)
+            joint_name = joint_info[1].decode("utf-8")
+            if joint_name in Model.JOINT_NAMES:
+                self._joint_indices[joint_name] = bullet_idx
+                # Initialize joint properties with defaults
+                joint_props = self.__bullet_config.get(
+                    "joint_properties", {}
+                ).get(joint_name, {})
+                self._joint_properties[joint_name] = {
+                    "friction": joint_props.get("friction", 0.0),
+                    "torque_control_noise": joint_props.get(
+                        "torque_control_noise", 0.0
+                    ),
+                    "torque_measurement_noise": joint_props.get(
+                        "torque_measurement_noise", 0.0
+                    ),
+                }
+                # Disable velocity controllers to enable torque control
+                pybullet.setJointMotorControl2(
+                    self.__robot_id,
+                    bullet_idx,
+                    pybullet.VELOCITY_CONTROL,
+                    force=0,
+                )
+
+            link_name = joint_info[12].decode("utf-8")
+            self.__link_index[link_name] = bullet_idx
+            self.__link_name[bullet_idx] = link_name
+
     def __del__(self):
         """!
         Disconnect PyBullet when deleting the backend instance.
@@ -190,7 +213,11 @@ class PyBulletBackend(Backend):
         Disconnect PyBullet properly.
         """
         if hasattr(self, "_bullet") and self._bullet is not None:
-            pybullet.disconnect()
+            try:
+                pybullet.disconnect()
+            except pybullet.error:
+                # PyBullet may already be disconnected, ignore the error
+                pass
             self._bullet = None
 
     def reset(self, init_state: RobotState) -> dict:
@@ -200,6 +227,26 @@ class PyBulletBackend(Backend):
         \param init_state Initial state of the robot.
         \return Initial spine observation dictionary.
         """
+        # Ensure PyBullet is still connected
+        if not hasattr(self, "_bullet") or self._bullet is None:
+            raise UpkieRuntimeError(
+                "PyBullet backend is not connected. "
+                "This may indicate the backend was not properly initialized."
+            )
+        
+        # Verify connection is actually active by attempting a simple query
+        # This will raise an error if not connected, which we'll catch
+        try:
+            # Test connection by getting number of bodies
+            pybullet.getNumBodies()
+        except (pybullet.error, AttributeError) as e:
+            raise UpkieRuntimeError(
+                f"PyBullet connection is not active: {e}. "
+                "The physics server may have been disconnected."
+            ) from e
+        
+        # Reset robot state - this will work even if robot was previously deleted
+        # as resetBasePositionAndOrientation will handle it
         self._reset_robot_state(init_state)
         pybullet.stepSimulation()
         return self.get_spine_observation()
@@ -210,6 +257,29 @@ class PyBulletBackend(Backend):
 
         \param init_state Initial state of the robot.
         """
+        # Check if robot body still exists, reload if necessary
+        try:
+            # Try to get AABB to verify body exists
+            pybullet.getAABB(self.__robot_id, physicsClientId=self._bullet)
+        except pybullet.error:
+            # Robot body was deleted, reload it
+            logger.warning(
+                "Robot body (ID=%d) was deleted, reloading...", self.__robot_id
+            )
+            self.__robot_id = pybullet.loadURDF(
+                upkie_description.URDF_PATH,
+                basePosition=[0, 0, 0.6],
+                baseOrientation=[0, 0, 0, 1],
+            )
+            # Rebuild joint indices for the new robot body
+            self._build_joint_indices()
+            # Reset joint torques for the new robot
+            self.__joint_torques = {
+                joint_name: 0.0 for joint_name in self._joint_indices.keys()
+            }
+            # Step simulation once to initialize the new robot
+            pybullet.stepSimulation()
+        
         # Reset base position and orientation
         position = init_state.position_base_in_world
         orientation_quat = init_state.orientation_base_in_world.as_quat()
@@ -409,30 +479,93 @@ class PyBulletBackend(Backend):
 
     def __get_servo_observations(self) -> dict:
         servo_obs = {}
-        for joint_name, joint_idx in self._joint_indices.items():
-            joint_state = pybullet.getJointState(
-                self.__robot_id, joint_idx, physicsClientId=self._bullet
-            )
-            position = joint_state[0]  # in rad
-            velocity = joint_state[1]  # in rad/s
+        # Use a while loop to handle robot reloading
+        max_retries = 2
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                for joint_name, joint_idx in self._joint_indices.items():
+                    try:
+                        joint_state = pybullet.getJointState(
+                            self.__robot_id, joint_idx, physicsClientId=self._bullet
+                        )
+                    except pybullet.error as e:
+                        # Check if robot exists
+                        try:
+                            pybullet.getAABB(self.__robot_id, physicsClientId=self._bullet)
+                            # Robot exists but joint query failed
+                            raise UpkieRuntimeError(
+                                f"Failed to get joint state for {joint_name} (joint_idx={joint_idx}, "
+                                f"robot_id={self.__robot_id}): {e}. "
+                                "The joint may be invalid."
+                            ) from e
+                        except pybullet.error:
+                            # Robot was deleted, need to reload
+                            raise  # Re-raise to trigger reload logic below
+                    
+                    position = joint_state[0]  # in rad
+                    velocity = joint_state[1]  # in rad/s
 
-            # Commanded torques are applied by the simulator exactly, so the
-            # measured torque is the commanded one stored in __joint_torques
-            torque = self.__joint_torques[joint_name]
+                    # Commanded torques are applied by the simulator exactly, so the
+                    # measured torque is the commanded one stored in __joint_torques
+                    torque = self.__joint_torques.get(joint_name, 0.0)
 
-            # Add Gaussian white noise to torque measurements if configured
-            joint_props = self._joint_properties[joint_name]
-            torque_measurement_noise = joint_props["torque_measurement_noise"]
-            if torque_measurement_noise > 1e-10:
-                noise = self.__rng.normal(0.0, torque_measurement_noise)
-                torque += noise
-            servo_obs[joint_name] = {
-                "position": position,
-                "velocity": velocity,
-                "torque": torque,
-                "temperature": 42.0,  # dummy value
-                "voltage": 18.0,  # dummy value
-            }
+                    # Add Gaussian white noise to torque measurements if configured
+                    joint_props = self._joint_properties.get(joint_name, {})
+                    torque_measurement_noise = joint_props.get("torque_measurement_noise", 0.0)
+                    if torque_measurement_noise > 1e-10:
+                        noise = self.__rng.normal(0.0, torque_measurement_noise)
+                        torque += noise
+                    servo_obs[joint_name] = {
+                        "position": position,
+                        "velocity": velocity,
+                        "torque": torque,
+                        "temperature": 42.0,  # dummy value
+                        "voltage": 18.0,  # dummy value
+                    }
+                # Successfully got all observations
+                return servo_obs
+                
+            except (pybullet.error, UpkieRuntimeError) as e:
+                # Robot was deleted during observation, reload it
+                if retry_count < max_retries - 1:
+                    logger.warning(
+                        "Robot body (ID=%d) was deleted during observation, reloading (retry %d/%d)...",
+                        self.__robot_id, retry_count + 1, max_retries
+                    )
+                    try:
+                        # Verify connection is still valid
+                        pybullet.getNumBodies()
+                        
+                        # Reload robot
+                        self.__robot_id = pybullet.loadURDF(
+                            upkie_description.URDF_PATH,
+                            basePosition=[0, 0, 0.6],
+                            baseOrientation=[0, 0, 0, 1],
+                        )
+                        self._build_joint_indices()
+                        self.__joint_torques = {
+                            joint_name: 0.0 for joint_name in self._joint_indices.keys()
+                        }
+                        # Step simulation multiple times to fully initialize
+                        for _ in range(10):
+                            pybullet.stepSimulation()
+                        retry_count += 1
+                        servo_obs = {}  # Reset observations
+                        continue
+                    except pybullet.error as conn_error:
+                        # Connection is broken, can't recover
+                        raise UpkieRuntimeError(
+                            f"PyBullet connection is broken and cannot recover: {conn_error}. "
+                            "This may indicate a serious simulation issue."
+                        ) from conn_error
+                else:
+                    # Max retries reached
+                    raise UpkieRuntimeError(
+                        f"Failed to get servo observations after {max_retries} reload attempts: {e}"
+                    ) from e
+        
         return servo_obs
 
     def __get_wheel_odometry_observation(self, servo_obs: dict) -> dict:

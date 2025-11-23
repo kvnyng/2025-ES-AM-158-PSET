@@ -1,0 +1,8 @@
+{
+  "terminal.integrated.shellArgs.osx": [
+    "-l",
+    "-c",
+    "eval \"$(conda shell.zsh hook)\" && conda activate harvard-es158-upkie && exec zsh"
+  ]
+}
+

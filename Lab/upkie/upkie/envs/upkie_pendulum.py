@@ -104,6 +104,9 @@ class UpkiePendulum(gym.Wrapper):
         fall_pitch: float = 1.0,
         left_wheeled: bool = True,
         max_ground_velocity: float = 1.0,
+        max_position_drift: float = 5.0,
+        max_angular_velocity: float = 10.0,
+        max_linear_velocity: float = 2.0,
     ):
         r"""!
         Initialize environment.
@@ -116,6 +119,12 @@ class UpkiePendulum(gym.Wrapper):
         \param max_ground_velocity Maximum commanded ground velocity in m/s.
             The default value of 1 m/s is conservative, don't hesitate to
             increase it once you feel confident in your agent.
+        \param max_position_drift Maximum allowed position drift from origin
+            before termination, in meters.
+        \param max_angular_velocity Maximum allowed angular velocity before
+            termination, in rad/s.
+        \param max_linear_velocity Maximum allowed linear velocity before
+            termination, in m/s.
         """
         super().__init__(env)
         if env.frequency is None:
@@ -156,6 +165,9 @@ class UpkiePendulum(gym.Wrapper):
         self.env = env
         self.fall_pitch = fall_pitch
         self.left_wheeled = left_wheeled
+        self.max_position_drift = max_position_drift
+        self.max_angular_velocity = max_angular_velocity
+        self.max_linear_velocity = max_linear_velocity
         self.env.max_time_steps = 300
 
     def __get_env_observation(self, spine_observation: dict) -> np.ndarray:
@@ -187,7 +199,7 @@ class UpkiePendulum(gym.Wrapper):
         r"""!
         Resets the environment and get an initial observation.
 
-        \param seed Number used to initialize the environment’s internal random
+        \param seed Number used to initialize the environment's internal random
             number generator.
         \param options Currently unused.
         \return
@@ -197,12 +209,15 @@ class UpkiePendulum(gym.Wrapper):
               Upkie this is the full observation dictionary sent by the spine.
         """
         self.time_stamp = 0
+        self.initial_position = None
         _, info = self.env.reset(seed=seed, options=options)
         spine_observation = info["spine_observation"]
         for joint in self.env.model.upper_leg_joints:
             position = spine_observation["servo"][joint.name]["position"]
             self.__leg_servo_action[joint.name]["position"] = position
         observation = self.__get_env_observation(spine_observation)
+        # Store initial position for drift detection
+        self.initial_position = observation[1]
         return observation, info
 
     def __get_leg_servo_action(self) -> Dict[str, Dict[str, float]]:
@@ -287,6 +302,86 @@ class UpkiePendulum(gym.Wrapper):
             return True
         return False
 
+    def __compute_reward(
+        self, observation: np.ndarray, action: np.ndarray
+    ) -> float:
+        r"""!
+        Compute reward based on observation and action.
+
+        The reward encourages stability by penalizing deviations from the
+        ideal balanced state (θ=0, ẋ=0, ẏ=0) and large control actions.
+
+        \param observation Current observation vector [θ, p, ẋ, ẏ].
+        \param action Current action [ground_velocity].
+        \return Reward value, typically in [0, 1] range.
+        """
+        theta = observation[0]  # pitch angle (rad)
+        theta_dot = observation[2]  # angular velocity (rad/s)
+        p_dot = observation[3]  # linear velocity (m/s)
+        action_mag = abs(action[0])  # action magnitude (m/s)
+
+        # Reward weights (tuned for stability)
+        w_theta = 0.5  # penalty for pitch deviation
+        w_theta_dot = 0.1  # penalty for angular velocity
+        w_p_dot = 0.1  # penalty for linear velocity
+        w_action = 0.05  # penalty for large actions (encourages smooth control)
+
+        # Compute reward: 1.0 - penalties
+        # Clamp to ensure reward is always positive
+        reward = 1.0 - (
+            w_theta * theta**2
+            + w_theta_dot * theta_dot**2
+            + w_p_dot * p_dot**2
+            + w_action * action_mag**2
+        )
+
+        # Ensure reward is non-negative
+        return max(0.0, reward)
+
+    def __check_termination_conditions(
+        self, observation: np.ndarray, spine_observation: dict
+    ) -> bool:
+        r"""!
+        Check additional termination conditions beyond fall detection.
+
+        \param observation Current observation vector [θ, p, ẋ, ẏ].
+        \param spine_observation Full spine observation dictionary.
+        \return True if termination condition is met.
+        """
+        # Check position drift
+        if self.initial_position is not None:
+            position = observation[1]
+            position_drift = abs(position - self.initial_position)
+            if position_drift > self.max_position_drift:
+                logger.warning(
+                    "Termination: excessive position drift (%.2f m > %.2f m)",
+                    position_drift,
+                    self.max_position_drift,
+                )
+                return True
+
+        # Check angular velocity
+        theta_dot = abs(observation[2])
+        if theta_dot > self.max_angular_velocity:
+            logger.warning(
+                "Termination: excessive angular velocity (%.2f rad/s > %.2f rad/s)",
+                theta_dot,
+                self.max_angular_velocity,
+            )
+            return True
+
+        # Check linear velocity
+        p_dot = abs(observation[3])
+        if p_dot > self.max_linear_velocity:
+            logger.warning(
+                "Termination: excessive linear velocity (%.2f m/s > %.2f m/s)",
+                p_dot,
+                self.max_linear_velocity,
+            )
+            return True
+
+        return False
+
     def step(
         self,
         action: np.ndarray,
@@ -313,14 +408,23 @@ class UpkiePendulum(gym.Wrapper):
               particular the full observation dictionary coming from the spine.
         """
         spine_action = self.__get_spine_action(action)
-        _, reward, terminated, truncated, info = self.env.step(spine_action)
+        _, _, terminated, truncated, info = self.env.step(spine_action)
         spine_observation = info["spine_observation"]
         observation = self.__get_env_observation(spine_observation)
+
+        # Compute reward based on observation and action
+        reward = self.__compute_reward(observation, action)
+
+        # Check termination conditions
         if self.__detect_fall(spine_observation):
             terminated = True
+        elif self.__check_termination_conditions(observation, spine_observation):
+            terminated = True
+
+        # Check time limit
         self.time_stamp += 1
         if self.env.max_time_steps is not None:
             if self.time_stamp >= self.env.max_time_steps:
                 truncated = True
-                print("Max time steps reached.")
+
         return observation, reward, terminated, truncated, info

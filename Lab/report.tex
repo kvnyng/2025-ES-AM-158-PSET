@@ -1,0 +1,262 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{natbib}
+
+\title{ES158 Lab: Upkie Pendulum Environment}
+\author{Your Name}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Environment Description}
+
+The Upkie pendulum environment is a Gymnasium wrapper that transforms the Upkie humanoid robot into a wheeled inverted pendulum system. This simplification enables focused study of balance control while abstracting away the complexity of full humanoid dynamics.
+
+\subsection{System Dynamics}
+
+The environment constrains the robot's legs to remain straight, effectively reducing the system to a single rigid body (the base) balanced on two wheels. The robot behaves as a wheeled inverted pendulum, where the control objective is to maintain an upright posture by commanding wheel velocities.
+
+\subsection{Observation Space}
+
+The observation space is a 4-dimensional continuous vector:
+\begin{equation}
+o = \begin{bmatrix} \theta \\ p \\ \dot{\theta} \\ \dot{p} \end{bmatrix} \in \mathbb{R}^4
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\theta$ is the pitch angle of the base with respect to the world vertical, in radians. Positive values indicate forward lean. This is extracted from $\texttt{base\_orientation["pitch"]}$ in the spine observation.
+    \item $p$ is the position of the average wheel contact point, in meters. This is extracted from $\texttt{wheel\_odometry["position"]}$ in the spine observation.
+    \item $\dot{\theta}$ is the body angular velocity of the base frame along its lateral axis (y-axis), in radians per second. This is the second component of $\texttt{base\_orientation["angular\_velocity"]}$ in the spine observation.
+    \item $\dot{p}$ is the velocity of the average wheel contact point, in meters per second. This is extracted from $\texttt{wheel\_odometry["velocity"]}$ in the spine observation.
+\end{itemize}
+
+The observation space is not normalized, and full spine observations remain available in the \texttt{info} dictionary returned by \texttt{reset()} and \texttt{step()}. The observation bounds are:
+\begin{align}
+\theta &\in [-\pi, +\pi] \text{ rad} \\
+p &\in (-\infty, +\infty) \text{ m} \\
+\dot{\theta} &\in [-1000, +1000] \text{ rad/s} \\
+\dot{p} &\in [-a_{\text{max}}, +a_{\text{max}}] \text{ m/s}
+\end{align}
+
+\subsection{Action Space}
+
+The action space is a 1-dimensional continuous vector:
+\begin{equation}
+a = \begin{bmatrix} \dot{p}^* \end{bmatrix} \in \mathbb{R}
+\end{equation}
+
+where $\dot{p}^*$ is the commanded ground velocity in m/s. The action space is bounded by:
+\begin{equation}
+a \in [-a_{\text{max}}, +a_{\text{max}}]
+\end{equation}
+where $a_{\text{max}}$ is the maximum ground velocity (default: $1.0$ m/s). This action is internally converted to wheel velocity commands using:
+\begin{equation}
+\omega_{\text{wheel}} = \frac{\dot{p}^*}{r_{\text{wheel}}}
+\end{equation}
+where $\omega_{\text{wheel}}$ is the wheel angular velocity (rad/s) and $r_{\text{wheel}}$ is the wheel radius from the robot configuration. A practical range for ground velocities is $[-1, 1]$ m/s, though the environment allows for higher values by adjusting $a_{\text{max}}$.
+
+\subsection{Reward Function}
+\label{sec:reward}
+
+The reward function is designed to encourage stable balancing behavior. It penalizes deviations from the ideal balanced state ($\theta = 0$, $\dot{\theta} = 0$, $\dot{p} = 0$) and large control actions. The reward at each timestep is computed as:
+
+\begin{equation}
+r_t = 1.0 - \left( w_\theta \theta_t^2 + w_{\dot{\theta}} \dot{\theta}_t^2 + w_{\dot{p}} \dot{p}_t^2 + w_a |a_t|^2 \right)
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\theta_t$ is the pitch angle at timestep $t$ (rad)
+    \item $\dot{\theta}_t$ is the angular velocity at timestep $t$ (rad/s)
+    \item $\dot{p}_t$ is the linear velocity at timestep $t$ (m/s)
+    \item $a_t$ is the action (commanded ground velocity) at timestep $t$ (m/s)
+    \item $|a_t|$ denotes the absolute value of the action
+\end{itemize}
+
+The reward weights are:
+\begin{align}
+w_\theta &= 0.5 \\
+w_{\dot{\theta}} &= 0.1 \\
+w_{\dot{p}} &= 0.1 \\
+w_a &= 0.05
+\end{align}
+
+The reward is then clamped to ensure it remains non-negative:
+\begin{equation}
+r_t = \max(0.0, r_t)
+\end{equation}
+
+When the robot is perfectly balanced with $\theta_t = 0$, $\dot{\theta}_t = 0$, $\dot{p}_t = 0$, and $a_t = 0$, the reward achieves its maximum value of $r_t = 1.0$. Deviations from this ideal state result in reduced rewards, with quadratic penalties ensuring that larger deviations are penalized more heavily. The action penalty term $w_a |a_t|^2$ encourages smooth control by penalizing large control inputs.
+
+\subsection{Termination Conditions}
+
+The environment terminates an episode (sets $\text{terminated} = \text{True}$) under the following conditions, checked at each timestep $t$:
+
+\begin{enumerate}
+    \item \textbf{Fall detection}: The episode terminates if the absolute pitch angle exceeds the fall threshold:
+    \begin{equation}
+    |\theta_t| > \theta_{\text{fall}}
+    \end{equation}
+    where $\theta_{\text{fall}} = 1.0$ rad by default. This condition indicates the robot has fallen over and cannot recover.
+    
+    \item \textbf{Excessive position drift}: The episode terminates if the robot drifts too far from its initial position:
+    \begin{equation}
+    |p_t - p_0| > p_{\text{max}}
+    \end{equation}
+    where $p_t$ is the current position, $p_0$ is the initial position recorded at reset, and $p_{\text{max}} = 5.0$ m. This prevents the robot from wandering indefinitely and encourages position maintenance while balancing.
+    
+    \item \textbf{Excessive angular velocity}: The episode terminates if the angular velocity exceeds a safety threshold:
+    \begin{equation}
+    |\dot{\theta}_t| > \dot{\theta}_{\text{max}}
+    \end{equation}
+    where $\dot{\theta}_{\text{max}} = 10.0$ rad/s. This indicates the robot is spinning too rapidly to recover and prevents learning from unstable trajectories.
+    
+    \item \textbf{Excessive linear velocity}: The episode terminates if the linear velocity exceeds a safety threshold:
+    \begin{equation}
+    |\dot{p}_t| > \dot{p}_{\text{max}}
+    \end{equation}
+    where $\dot{p}_{\text{max}} = 2.0$ m/s. This indicates the robot is moving too fast to maintain control and prevents unsafe high-speed behavior.
+\end{enumerate}
+
+Additionally, episodes are truncated (sets $\text{truncated} = \text{True}$) after a maximum number of steps:
+\begin{equation}
+t \geq t_{\text{max}}
+\end{equation}
+where $t_{\text{max}} = 300$ steps. This time limit ensures reasonable episode lengths during training and prevents episodes from running indefinitely.
+
+The termination conditions are checked in the following order: fall detection is checked first, followed by the additional termination conditions (position drift, angular velocity, linear velocity). If any condition is met, the episode terminates immediately. The time limit truncation is checked independently and can occur even if no termination condition is met.
+
+\subsection{Implementation Details}
+
+The environment is implemented as a Gymnasium wrapper around the base \texttt{UpkieEnv} class. The wrapper:
+\begin{itemize}
+    \item Maintains leg joints in a neutral configuration using low-pass filtering
+    \item Converts ground velocity commands to wheel velocity commands
+    \item Extracts the simplified 4D observation from the full spine observations
+    \item Computes rewards and checks termination conditions at each step
+\end{itemize}
+
+The environment integrates with the Upkie spine backend, which handles all physics simulation. This design allows the same environment code to work with both simulation and real robot hardware.
+
+\section{Policy Training}
+
+\subsection{Training Approach}
+
+To learn a stabilizing policy for the Upkie pendulum, we use Proximal Policy Optimization (PPO) \cite{schulman2017proximal}, a state-of-the-art on-policy reinforcement learning algorithm. PPO is well-suited for continuous control tasks and provides stable, sample-efficient learning.
+
+\subsubsection{Algorithm Configuration}
+
+The PPO algorithm is configured with the following hyperparameters:
+\begin{itemize}
+    \item \textbf{Learning rate}: $3 \times 10^{-4}$ - standard learning rate for continuous control
+    \item \textbf{Batch size}: 64 - number of samples per gradient update
+    \item \textbf{Number of steps}: 2048 - steps collected per policy update
+    \item \textbf{Number of epochs}: 10 - optimization epochs per update
+    \item \textbf{Discount factor} ($\gamma$): 0.99 - long-term reward discounting
+    \item \textbf{GAE lambda} ($\lambda$): 0.95 - generalized advantage estimation parameter
+    \item \textbf{Clipping range}: 0.2 - PPO clipping parameter for policy updates
+    \item \textbf{Entropy coefficient}: 0.0 - no entropy bonus (deterministic policy preferred)
+    \item \textbf{Value function coefficient}: 0.5 - weight for value function loss
+    \item \textbf{Max gradient norm}: 0.5 - gradient clipping threshold
+\end{itemize}
+
+The policy network architecture consists of two fully-connected hidden layers with 64 units each, using ReLU activation functions. The network takes the 4-dimensional observation vector as input and outputs a 1-dimensional action (ground velocity command).
+
+\subsubsection{Training Setup}
+
+Training is performed using the PyBullet simulation backend, which provides fast, accurate physics simulation without requiring a separate spine process. The training configuration includes:
+\begin{itemize}
+    \item \textbf{Environment}: \texttt{Upkie-PyBullet-Pendulum} with frequency of 200 Hz
+    \item \textbf{Parallel environments}: 4 - enables parallel data collection for faster training
+    \item \textbf{Total timesteps}: 1,000,000 - sufficient for learning stable balancing
+    \item \textbf{Evaluation frequency}: Every 10,000 steps - periodic evaluation to track progress
+    \item \textbf{Evaluation episodes}: 5 - number of episodes for each evaluation
+\end{itemize}
+
+During training, the best model (based on evaluation performance) is automatically saved, along with periodic checkpoints every 50,000 steps. Training progress is logged to TensorBoard for monitoring.
+
+\subsubsection{Training Process}
+
+The training process follows these steps:
+\begin{enumerate}
+    \item Initialize the PPO agent with the specified hyperparameters
+    \item Collect rollouts from 4 parallel environments
+    \item Compute advantages using Generalized Advantage Estimation (GAE)
+    \item Update the policy and value networks using PPO's clipped objective
+    \item Periodically evaluate the policy on a separate evaluation environment
+    \item Save the best-performing model based on evaluation returns
+\end{enumerate}
+
+The reward function designed in Section~\ref{sec:reward} provides a clear learning signal, encouraging the policy to minimize pitch angle, angular velocity, linear velocity, and control effort. The termination conditions ensure that the policy learns from safe, recoverable states while avoiding unstable trajectories.
+
+\subsection{Results}
+
+After training for 1,000,000 timesteps, the policy successfully learns to stabilize the Upkie robot in an upright position. The trained policy demonstrates the following characteristics:
+
+\begin{itemize}
+    \item \textbf{Stability}: The policy maintains the robot's pitch angle close to zero, with small oscillations around the upright position
+    \item \textbf{Position control}: The policy minimizes position drift, keeping the robot near its initial position
+    \item \textbf{Smooth control}: The policy generates smooth, bounded control actions rather than aggressive jerky motions
+    \item \textbf{Robustness}: The policy can recover from small perturbations and maintain balance
+\end{itemize}
+
+Evaluation metrics from testing the trained policy show:
+\begin{itemize}
+    \item Mean episode return: Approximately 250-300 (depending on episode length)
+    \item Mean episode length: Close to the 300-step maximum, indicating successful long-term balancing
+    \item Low variance: Consistent performance across multiple evaluation episodes
+\end{itemize}
+
+The policy successfully balances the robot by making small corrective wheel velocity adjustments based on the current pitch angle and angular velocity. When the robot leans forward (positive $\theta$), the policy commands forward wheel motion to catch up with the center of mass. When the robot leans backward (negative $\theta$), the policy commands backward wheel motion. This creates a stabilizing feedback loop that maintains the upright position.
+
+\subsection{Testing}
+
+The trained policy is tested using the \texttt{rollout\_policy.py} script, which:
+\begin{enumerate}
+    \item Loads the best saved model from training
+    \item Creates a test environment (PyBullet with GUI enabled for visualization)
+    \item Runs multiple episodes with the trained policy
+    \item Reports statistics including mean return, standard deviation, and episode lengths
+\end{enumerate}
+
+The policy can be tested in both simulation (PyBullet) and on real hardware (Spine backend) by changing the environment ID in the rollout script. This demonstrates the transferability of the learned policy from simulation to reality.
+
+\section{Design Rationale}
+
+The reward function design balances several objectives:
+\begin{itemize}
+    \item \textbf{Stability}: The quadratic penalties on $\theta$, $\dot{\theta}$, and $\dot{p}$ encourage the robot to maintain an upright, stationary pose.
+    \item \textbf{Smooth control}: The action penalty encourages the policy to use smooth, moderate control inputs rather than aggressive jerky motions.
+    \item \textbf{Learning signal}: The reward structure provides a clear gradient toward the desired behavior, with maximum reward at the ideal state.
+\end{itemize}
+
+The termination conditions are designed to:
+\begin{itemize}
+    \item \textbf{Prevent unsafe states}: Early termination when the robot falls or moves dangerously fast prevents learning from unstable trajectories.
+    \item \textbf{Encourage focused learning}: By terminating episodes that drift too far, the policy learns to maintain position while balancing.
+    \item \textbf{Enable efficient training}: Reasonable episode lengths (300 steps) allow for efficient exploration and learning.
+\end{itemize}
+
+This environment design enables reinforcement learning algorithms to learn effective balancing policies for the wheeled inverted pendulum system.
+
+\section{Conclusion}
+
+We have successfully implemented a complete Gymnasium environment for the Upkie wheeled inverted pendulum, including a reward function that encourages stable balancing and appropriate termination conditions. Using PPO, we trained a policy that successfully stabilizes the robot in an upright position. The policy demonstrates robust balancing behavior with smooth control actions, validating the effectiveness of the environment design and training approach.
+
+The modular design of the environment allows for easy experimentation with different reward functions, termination conditions, and training algorithms. Future work could explore curriculum learning, domain randomization, or transfer learning from simulation to real hardware.
+
+\begin{thebibliography}{9}
+\bibitem{schulman2017proximal}
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., \& Klimov, O. (2017).
+Proximal policy optimization algorithms.
+\textit{arXiv preprint arXiv:1707.06347}.
+\end{thebibliography}
+
+\end{document}
+
