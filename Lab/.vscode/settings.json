@@ -1,8 +1,15 @@
 {
-  "terminal.integrated.shellArgs.osx": [
-    "-l",
-    "-c",
-    "eval \"$(conda shell.zsh hook)\" && conda activate harvard-es158-upkie && exec zsh"
-  ]
+  "terminal.integrated.profiles.osx": {
+    "zsh (conda harvard-es158-upkie)": {
+      "path": "/bin/zsh",
+      "args": [
+        "-l"
+      ],
+      "env": {
+        "ZDOTDIR": "${workspaceFolder}"
+      }
+    }
+  },
+  "terminal.integrated.defaultProfile.osx": "zsh (conda harvard-es158-upkie)"
 }
 

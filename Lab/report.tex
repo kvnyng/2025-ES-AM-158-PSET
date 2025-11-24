@@ -3,10 +3,9 @@
 \usepackage{amssymb}
 \usepackage{graphicx}
 \usepackage{hyperref}
-\usepackage{natbib}
 
 \title{ES158 Lab: Upkie Pendulum Environment}
-\author{Your Name}
+\author{Kevin Hongkai Yang}
 \date{\today}
 
 \begin{document}
@@ -64,10 +63,10 @@ where $\omega_{\text{wheel}}$ is the wheel angular velocity (rad/s) and $r_{\tex
 \subsection{Reward Function}
 \label{sec:reward}
 
-The reward function is designed to encourage stable balancing behavior. It penalizes deviations from the ideal balanced state ($\theta = 0$, $\dot{\theta} = 0$, $\dot{p} = 0$) and large control actions. The reward at each timestep is computed as:
+The reward function is designed to encourage stable balancing behavior with smooth control actions. It penalizes deviations from the ideal balanced state ($\theta = 0$, $\dot{\theta} = 0$, $\dot{p} = 0$) and large or jerky control actions. The reward at each timestep is computed as:
 
 \begin{equation}
-r_t = 1.0 - \left( w_\theta \theta_t^2 + w_{\dot{\theta}} \dot{\theta}_t^2 + w_{\dot{p}} \dot{p}_t^2 + w_a |a_t|^2 \right)
+r_t = 1.0 - \left( w_\theta \theta_t^2 + w_{\dot{\theta}} \dot{\theta}_t^2 + w_{\dot{p}} \dot{p}_t^2 + w_a |a_t|^2 + w_s |\Delta a_t|^2 + w_{\text{accel}} |\Delta^2 a_t|^2 \right)
 \end{equation}
 
 where:
@@ -77,24 +76,30 @@ where:
     \item $\dot{p}_t$ is the linear velocity at timestep $t$ (m/s)
     \item $a_t$ is the action (commanded ground velocity) at timestep $t$ (m/s)
     \item $|a_t|$ denotes the absolute value of the action
+    \item $\Delta a_t = a_t - a_{t-1}$ is the first derivative of the action (action velocity), penalizing rapid changes in control commands
+    \item $\Delta^2 a_t = \Delta a_t - \Delta a_{t-1}$ is the second derivative of the action (action acceleration), penalizing jerky control behavior
 \end{itemize}
 
 The reward weights are:
 \begin{align}
-w_\theta &= 0.5 \\
-w_{\dot{\theta}} &= 0.1 \\
-w_{\dot{p}} &= 0.1 \\
-w_a &= 0.05
+w_\theta &= 2.0 \\
+w_{\dot{\theta}} &= 0.5 \\
+w_{\dot{p}} &= 0.5 \\
+w_a &= 1.0 \\
+w_s &= 2.0 \\
+w_{\text{accel}} &= 1.5
 \end{align}
 
-The reward is then clamped to ensure it remains non-negative:
-\begin{equation}
-r_t = \max(0.0, r_t)
-\end{equation}
+The smoothness terms ($w_s |\Delta a_t|^2$ and $w_{\text{accel}} |\Delta^2 a_t|^2$) are critical additions that penalize rapid changes and jerky motion in the control actions. This encourages the policy to generate smooth, continuous control commands rather than aggressive, oscillatory behavior. The first derivative penalty ($w_s$) discourages large step changes in actions, while the second derivative penalty ($w_{\text{accel}}$) discourages acceleration in action changes, further smoothing the control profile.
 
-When the robot is perfectly balanced with $\theta_t = 0$, $\dot{\theta}_t = 0$, $\dot{p}_t = 0$, and $a_t = 0$, the reward achieves its maximum value of $r_t = 1.0$. Deviations from this ideal state result in reduced rewards, with quadratic penalties ensuring that larger deviations are penalized more heavily. The action penalty term $w_a |a_t|^2$ encourages smooth control by penalizing large control inputs.
+Note that the reward function does not include a direct penalty on position $p$. Position drift is handled through termination conditions (Section~\ref{sec:termination}), allowing the policy to focus on balance control while the termination condition prevents excessive wandering. This design choice centers the learning objective on maintaining upright balance rather than position tracking.
+
+During training, rewards are normalized using \texttt{VecNormalize} to stabilize value function learning and prevent value loss divergence. The normalized rewards are clipped to $[-10, 10]$ to prevent extreme values from destabilizing training.
+
+When the robot is perfectly balanced with $\theta_t = 0$, $\dot{\theta}_t = 0$, $\dot{p}_t = 0$, $a_t = 0$, and no action changes ($\Delta a_t = 0$, $\Delta^2 a_t = 0$), the reward achieves its maximum value of $r_t = 1.0$. Deviations from this ideal state result in reduced rewards, with quadratic penalties ensuring that larger deviations are penalized more heavily.
 
 \subsection{Termination Conditions}
+\label{sec:termination}
 
 The environment terminates an episode (sets $\text{terminated} = \text{True}$) under the following conditions, checked at each timestep $t$:
 
@@ -145,6 +150,7 @@ The environment is implemented as a Gymnasium wrapper around the base \texttt{Up
 The environment integrates with the Upkie spine backend, which handles all physics simulation. This design allows the same environment code to work with both simulation and real robot hardware.
 
 \section{Policy Training}
+\label{sec:training}
 
 \subsection{Training Approach}
 
@@ -154,13 +160,14 @@ To learn a stabilizing policy for the Upkie pendulum, we use Proximal Policy Opt
 
 The PPO algorithm is configured with the following hyperparameters:
 \begin{itemize}
-    \item \textbf{Learning rate}: $3 \times 10^{-4}$ - standard learning rate for continuous control
-    \item \textbf{Batch size}: 64 - number of samples per gradient update
-    \item \textbf{Number of steps}: 2048 - steps collected per policy update
-    \item \textbf{Number of epochs}: 10 - optimization epochs per update
+    \item \textbf{Learning rate}: $2 \times 10^{-4}$ (initial) with linear schedule decaying to $1 \times 10^{-5}$ - adaptive learning rate that maintains higher values longer to prevent premature convergence
+    \item \textbf{Batch size}: 128 - number of samples per gradient update
+    \item \textbf{Number of steps}: 2048 total steps across all parallel environments - steps collected per policy update (distributed across parallel envs)
+    \item \textbf{Number of epochs}: 5 - optimization epochs per update
     \item \textbf{Discount factor} ($\gamma$): 0.99 - long-term reward discounting
     \item \textbf{GAE lambda} ($\lambda$): 0.95 - generalized advantage estimation parameter
     \item \textbf{Clipping range}: 0.2 - PPO clipping parameter for policy updates
+    \item \textbf{Value function clipping range}: 0.2 - additional clipping for value function to prevent divergence
     \item \textbf{Entropy coefficient}: 0.0 - no entropy bonus (deterministic policy preferred)
     \item \textbf{Value function coefficient}: 0.5 - weight for value function loss
     \item \textbf{Max gradient norm}: 0.5 - gradient clipping threshold
@@ -168,32 +175,36 @@ The PPO algorithm is configured with the following hyperparameters:
 
 The policy network architecture consists of two fully-connected hidden layers with 64 units each, using ReLU activation functions. The network takes the 4-dimensional observation vector as input and outputs a 1-dimensional action (ground velocity command).
 
+Observations and rewards are normalized using \texttt{VecNormalize} during training to stabilize learning. Observations are clipped to $[-10, 10]$ and rewards are normalized with the same discount factor ($\gamma = 0.99$) used for value estimation, then clipped to $[-10, 10]$. This normalization is critical for preventing value function divergence and stabilizing training.
+
 \subsubsection{Training Setup}
 
 Training is performed using the PyBullet simulation backend, which provides fast, accurate physics simulation without requiring a separate spine process. The training configuration includes:
 \begin{itemize}
     \item \textbf{Environment}: \texttt{Upkie-PyBullet-Pendulum} with frequency of 200 Hz
-    \item \textbf{Parallel environments}: 4 - enables parallel data collection for faster training
+    \item \textbf{Parallel environments}: 10 - enables parallel data collection for faster training using \texttt{DummyVecEnv} (same process, multiple PyBullet connections)
     \item \textbf{Total timesteps}: 1,000,000 - sufficient for learning stable balancing
-    \item \textbf{Evaluation frequency}: Every 10,000 steps - periodic evaluation to track progress
-    \item \textbf{Evaluation episodes}: 5 - number of episodes for each evaluation
+    \item \textbf{Checkpoint frequency}: Every 50,000 steps - periodic checkpoints for recovery and analysis
+    \item \textbf{Evaluation}: Disabled during training to avoid robot deletion issues; evaluation can be performed manually after training using \texttt{rollout\_policy.py}
 \end{itemize}
 
-During training, the best model (based on evaluation performance) is automatically saved, along with periodic checkpoints every 50,000 steps. Training progress is logged to TensorBoard for monitoring.
+During training, periodic checkpoints are saved every 50,000 steps, including model weights, optimizer state, and normalization statistics. The final model is saved with a timestamp upon training completion. Training progress is logged to TensorBoard for monitoring, including policy loss, value loss, and smoothed loss curves via a custom \texttt{LossCurveCallback}.
 
 \subsubsection{Training Process}
 
 The training process follows these steps:
 \begin{enumerate}
-    \item Initialize the PPO agent with the specified hyperparameters
-    \item Collect rollouts from 4 parallel environments
+    \item Initialize the PPO agent with the specified hyperparameters and learning rate schedule
+    \item Create 10 parallel environments using \texttt{DummyVecEnv} (each with its own PyBullet connection)
+    \item Wrap environments with \texttt{VecNormalize} to normalize observations and rewards
+    \item Collect rollouts from 10 parallel environments (2048 total steps distributed across envs)
     \item Compute advantages using Generalized Advantage Estimation (GAE)
-    \item Update the policy and value networks using PPO's clipped objective
-    \item Periodically evaluate the policy on a separate evaluation environment
-    \item Save the best-performing model based on evaluation returns
+    \item Update the policy and value networks using PPO's clipped objective with value function clipping
+    \item Save periodic checkpoints every 50,000 steps (including normalization statistics)
+    \item Log training metrics (losses, returns) to TensorBoard via custom callbacks
 \end{enumerate}
 
-The reward function designed in Section~\ref{sec:reward} provides a clear learning signal, encouraging the policy to minimize pitch angle, angular velocity, linear velocity, and control effort. The termination conditions ensure that the policy learns from safe, recoverable states while avoiding unstable trajectories.
+The reward function designed in Section~\ref{sec:reward} provides a clear learning signal, encouraging the policy to minimize pitch angle, angular velocity, linear velocity, control effort, and action smoothness. The smoothness penalties (first and second derivatives of actions) are particularly important for generating stable, non-jerky control policies. The termination conditions ensure that the policy learns from safe, recoverable states while avoiding unstable trajectories. Reward normalization via \texttt{VecNormalize} stabilizes value function learning and prevents training instability.
 
 \subsection{Results}
 
@@ -213,6 +224,22 @@ Evaluation metrics from testing the trained policy show:
     \item Low variance: Consistent performance across multiple evaluation episodes
 \end{itemize}
 
+Training progress is monitored through loss and KL divergence metrics, as shown in Figures~\ref{fig:loss} and~\ref{fig:kl_divergence}. The loss curve (Figure~\ref{fig:loss}) shows the total training loss decreasing over time, indicating successful learning. The loss is smoothed using a rolling average with a window size of 50 to better visualize the overall trend. The KL divergence curve (Figure~\ref{fig:kl_divergence}) tracks the approximate KL divergence between the old and new policies during PPO updates, which helps monitor policy update stability. Both metrics demonstrate stable training convergence over the course of 1,000,000 timesteps.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{upkie/graphs/loss_PPO_22.png}
+    \caption{Training loss over time. The raw loss values (semi-transparent) and smoothed curve (window size 50) are shown. The loss decreases over training, indicating successful learning.}
+    \label{fig:loss}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{upkie/graphs/kl_divergence_PPO_22.png}
+    \caption{Approximate KL divergence between old and new policies during PPO updates. The raw values (semi-transparent) and smoothed curve (window size 50) are shown. Stable KL divergence indicates controlled policy updates.}
+    \label{fig:kl_divergence}
+\end{figure}
+
 The policy successfully balances the robot by making small corrective wheel velocity adjustments based on the current pitch angle and angular velocity. When the robot leans forward (positive $\theta$), the policy commands forward wheel motion to catch up with the center of mass. When the robot leans backward (negative $\theta$), the policy commands backward wheel motion. This creates a stabilizing feedback loop that maintains the upright position.
 
 \subsection{Testing}
@@ -231,9 +258,10 @@ The policy can be tested in both simulation (PyBullet) and on real hardware (Spi
 
 The reward function design balances several objectives:
 \begin{itemize}
-    \item \textbf{Stability}: The quadratic penalties on $\theta$, $\dot{\theta}$, and $\dot{p}$ encourage the robot to maintain an upright, stationary pose.
-    \item \textbf{Smooth control}: The action penalty encourages the policy to use smooth, moderate control inputs rather than aggressive jerky motions.
-    \item \textbf{Learning signal}: The reward structure provides a clear gradient toward the desired behavior, with maximum reward at the ideal state.
+    \item \textbf{Stability}: The quadratic penalties on $\theta$, $\dot{\theta}$, and $\dot{p}$ encourage the robot to maintain an upright, stationary pose. The increased weight on pitch angle ($w_\theta = 2.0$) prioritizes balance maintenance.
+    \item \textbf{Smooth control}: The action penalty ($w_a = 1.0$) and smoothness penalties ($w_s = 2.0$, $w_{\text{accel}} = 1.5$) work together to encourage the policy to use smooth, continuous control inputs rather than aggressive jerky motions. The smoothness terms penalize both rapid changes (first derivative) and acceleration in changes (second derivative), creating a strong incentive for smooth control profiles.
+    \item \textbf{Position centering}: Position $p$ is not directly penalized in the reward function, allowing the policy to focus on balance control. Position drift is handled through termination conditions, which prevent excessive wandering while not constraining the learning objective.
+    \item \textbf{Learning signal}: The reward structure provides a clear gradient toward the desired behavior, with maximum reward at the ideal state. Reward normalization during training further stabilizes the learning process.
 \end{itemize}
 
 The termination conditions are designed to:
@@ -244,6 +272,166 @@ The termination conditions are designed to:
 \end{itemize}
 
 This environment design enables reinforcement learning algorithms to learn effective balancing policies for the wheeled inverted pendulum system.
+
+\section{Task 3: Full Model Servos Control}
+
+\subsection{Environment Overview}
+
+Task 3 extends the pendulum control problem to the full Upkie robot model with direct servo-level control. Unlike the simplified pendulum environment, this task requires controlling six servomotors directly: left hip, left knee, left wheel, right hip, right knee, and right wheel. This provides significantly more control authority and complexity, as the policy must coordinate all six joints to maintain balance.
+
+\subsection{Action Space}
+
+The action space for the Upkie-Servos environment is a dictionary with one key for each of the six servos. Each servo action is itself a dictionary containing:
+\begin{itemize}
+    \item \texttt{position} $\theta^*$ (rad): Commanded joint angle, or \texttt{NaN} to disable the position loop
+    \item \texttt{velocity} $\dot{\theta}^*$ (rad/s): Commanded joint velocity
+    \item \texttt{feedforward\_torque} $\tau_{\text{ff}}$ (N·m): Feedforward torque command
+    \item \texttt{kp\_scale} $k_p^{\text{scale}}$: Scaling factor for position feedback gain, $\in [0, 1]$
+    \item \texttt{kd\_scale} $k_d^{\text{scale}}$: Scaling factor for velocity feedback gain, $\in [0, 1]$
+    \item \texttt{maximum\_torque} $\tau_{\text{max}}$ (N·m): Maximum torque limit
+\end{itemize}
+
+The servo applies torque according to:
+\begin{equation}
+\tau = \text{clamp}_{[-\tau_{\text{max}}, \tau_{\text{max}}]} \left( \tau_{\text{ff}} + k_p k_p^{\text{scale}} (\theta^* - \theta) + k_d k_d^{\text{scale}} (\dot{\theta}^* - \dot{\theta}) \right)
+\end{equation}
+
+where $k_p$ and $k_d$ are fixed controller gains configured in the moteus controllers (running at $\sim$40 kHz, faster than the agent-spine loop).
+
+For training with PPO, we use an action wrapper that converts a normalized Box action space to the servo dictionary format:
+\begin{itemize}
+    \item \textbf{Wheels}: Velocity commands in $[-1, 1]$ are scaled to velocity limits, with position loop disabled (\texttt{NaN})
+    \item \textbf{Legs (hips/knees)}: Position commands in $[-1, 1]$ are mapped to joint position limits, with velocity set to zero
+\end{itemize}
+
+The action wrapper uses fixed gain scales: $k_p^{\text{wheel}} = 0.0$, $k_d^{\text{wheel}} = 1.7$, $k_p^{\text{leg}} = 2.0$, $k_d^{\text{leg}} = 1.7$. This design choice simplifies the action space while maintaining effective control authority.
+
+\subsection{Observation Space}
+
+The observation space is a dictionary with one key per servo, where each servo observation contains:
+\begin{itemize}
+    \item \texttt{position} (rad): Current joint angle
+    \item \texttt{velocity} (rad/s): Current joint velocity
+    \item \texttt{torque} (N·m): Current joint torque
+    \item \texttt{temperature} (°C): Servo temperature
+    \item \texttt{voltage} (V): Power bus voltage
+\end{itemize}
+
+For training, we flatten this dictionary into a 12-dimensional vector (6 joints $\times$ 2: position + velocity), preserving the order established by the action wrapper. The full backend observation dictionary remains available in the \texttt{info} dictionary for custom reward shaping and termination logic.
+
+\subsection{Reward Function}
+
+The reward function for the servos environment is designed to encourage stable balancing while penalizing excessive control effort. The reward at each timestep is:
+
+\begin{equation}
+r_t = 1.0 - \left( w_\theta \theta_t^2 + w_{\dot{\theta}} \dot{\theta}_t^2 + w_{\dot{p}} \dot{p}_t^2 + w_a |a_t|^2 + w_s |\Delta a_t|^2 + w_{\text{accel}} |\Delta^2 a_t|^2 \right)
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\theta_t$ is the pitch angle at timestep $t$ (rad)
+    \item $\dot{\theta}_t$ is the pitch angular velocity at timestep $t$ (rad/s)
+    \item $\dot{p}_t$ is the linear velocity at timestep $t$ (m/s)
+    \item $|a_t|$ is the action magnitude (sum of absolute values of all servo commands)
+    \item $\Delta a_t$ is the change in action magnitude (first derivative)
+    \item $\Delta^2 a_t$ is the change in action magnitude change (second derivative)
+\end{itemize}
+
+The reward weights are:
+\begin{align}
+w_\theta &= 0.5 \\
+w_{\dot{\theta}} &= 0.1 \\
+w_{\dot{p}} &= 0.1 \\
+w_a &= 0.05 \\
+w_s &= 0.01 \\
+w_{\text{accel}} &= 0.005
+\end{align}
+
+The action magnitude is computed by summing the absolute values of velocity commands (for wheels) and position commands (for legs) across all servos. This provides a measure of overall control effort. The smoothness penalties ($w_s$ and $w_{\text{accel}}$) encourage gradual changes in control effort, promoting stable and smooth control policies.
+
+\subsection{Termination Conditions}
+
+The termination conditions are identical to the pendulum environment (Section~\ref{sec:termination}):
+\begin{enumerate}
+    \item \textbf{Fall detection}: $|\theta_t| > 1.0$ rad
+    \item \textbf{Position drift}: $|p_t - p_0| > 5.0$ m
+    \item \textbf{Angular velocity}: $|\dot{\theta}_t| > 10.0$ rad/s
+    \item \textbf{Linear velocity}: $|\dot{p}_t| > 2.0$ m/s
+\end{enumerate}
+
+Episodes are also truncated after 300 steps. These conditions ensure safe training and prevent learning from unstable trajectories.
+
+\subsection{Training Configuration}
+
+Training uses the same PPO algorithm as the pendulum task, with modifications for the increased complexity:
+
+\begin{itemize}
+    \item \textbf{Environment}: \texttt{Upkie-PyBullet-Servos} with frequency of 200 Hz
+    \item \textbf{Parallel environments}: 8 (reduced from 10 due to increased computational cost)
+    \item \textbf{Total timesteps}: 2,000,000 (increased to accommodate higher complexity)
+    \item \textbf{Network architecture}: Two hidden layers with 128 units each (increased from 64 to handle 12D observations)
+    \item \textbf{Learning rate}: $2 \times 10^{-4}$ (initial) with linear schedule to $1 \times 10^{-5}$
+    \item \textbf{Batch size}: 128
+    \item \textbf{Number of epochs}: 5
+    \item \textbf{Other hyperparameters}: Same as pendulum task (Section~\ref{sec:training})
+\end{itemize}
+
+The environment wrapper chain is:
+\begin{enumerate}
+    \item Base \texttt{UpkieServos} environment
+    \item \texttt{ServosRewardWrapper}: Adds reward shaping and termination conditions
+    \item \texttt{ServoVelActionWrapper}: Converts Box actions to servo dictionary format
+    \item \texttt{ServoObsFlattenWrapper}: Flattens dictionary observations to Box
+    \item \texttt{TimeLimit}: Limits episode length to 300 steps
+\end{enumerate}
+
+Observations and rewards are normalized using \texttt{VecNormalize} to stabilize training, with the same normalization parameters as the pendulum task.
+
+\subsection{Implementation Details}
+
+The reward wrapper extracts state information from the full spine observation dictionary:
+\begin{itemize}
+    \item Pitch angle from \texttt{base\_orientation["pitch"]}
+    \item Pitch velocity from \texttt{base\_orientation["angular\_velocity"][1]} (y-component)
+    \item Position and linear velocity from \texttt{wheel\_odometry}
+\end{itemize}
+
+The action magnitude is computed by extracting velocity commands from wheel servos and position commands from leg servos, then summing their absolute values. This provides a unified measure of control effort across the different control modes (velocity for wheels, position for legs).
+
+\subsection{Results and Challenges}
+
+Training the full servos model presents several challenges compared to the simplified pendulum:
+
+\begin{itemize}
+    \item \textbf{Increased dimensionality}: 12D observation space and 6D action space (after conversion) vs. 4D observation and 1D action for pendulum
+    \item \textbf{Control coordination}: The policy must coordinate all six servos simultaneously, requiring more sophisticated control strategies
+    \item \textbf{Training stability}: The higher-dimensional action space can lead to more unstable training, requiring careful hyperparameter tuning
+    \item \textbf{Diverse solutions}: Unlike the pendulum task, the servos environment allows for diverse stabilization patterns (e.g., different leg configurations, wheel movements)
+\end{itemize}
+
+The training process demonstrates that the policy learns to improve over time, though achieving excellent performance can be challenging. The reward function successfully guides the policy toward stable balancing behavior, with the policy learning to coordinate servo commands to maintain upright posture.
+
+Evaluation of trained policies shows that the robot can exhibit various stabilization strategies, including:
+\begin{itemize}
+    \item Active leg movements to shift center of mass
+    \item Coordinated wheel and leg motions for balance
+    \item Different leg configurations for stability
+\end{itemize}
+
+This diversity in solutions is expected and demonstrates the flexibility of the full control model compared to the constrained pendulum system.
+
+\subsection{Design Rationale}
+
+The reward function design for the servos environment balances several considerations:
+
+\begin{itemize}
+    \item \textbf{Balance priority}: The pitch angle penalty ($w_\theta = 0.5$) encourages upright posture, though with lower weight than the pendulum task to allow for more diverse control strategies
+    \item \textbf{Control effort}: The action magnitude penalty ($w_a = 0.05$) is relatively small, allowing the policy to use the full control authority when needed while still discouraging excessive control effort
+    \item \textbf{Smoothness}: The smoothness penalties are smaller than the pendulum task, recognizing that coordinated multi-joint control may require more dynamic movements
+    \item \textbf{State extraction}: Using the full spine observation allows the reward function to access all relevant state information while the flattened observation provides a clean input to the policy network
+\end{itemize}
+
+The action wrapper design (velocity for wheels, position for legs) reflects the natural control modes of these joints: wheels are best controlled via velocity for balance, while legs benefit from position control for maintaining desired configurations.
 
 \section{Conclusion}
 

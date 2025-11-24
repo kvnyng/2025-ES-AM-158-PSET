@@ -86,24 +86,25 @@ class PyBulletBackend(Backend):
             )
 
         # Disable scene during initialization
-        pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_GUI, 0)
-        pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_RENDERING, 0)
-        pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_SHADOWS, 0)
+        pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_GUI, 0, physicsClientId=self._bullet)
+        pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_RENDERING, 0, physicsClientId=self._bullet)
+        pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_SHADOWS, 0, physicsClientId=self._bullet)
 
         # Set up simulator parameters
         pybullet.setAdditionalSearchPath(pybullet_data.getDataPath())
-        pybullet.setGravity(0, 0, -9.81)
-        pybullet.setRealTimeSimulation(False)  # making sure
-        pybullet.setTimeStep(dt / nb_substeps)
+        pybullet.setGravity(0, 0, -9.81, physicsClientId=self._bullet)
+        pybullet.setRealTimeSimulation(False, physicsClientId=self._bullet)  # making sure
+        pybullet.setTimeStep(dt / nb_substeps, physicsClientId=self._bullet)
 
         # Load ground plane
-        pybullet.loadURDF("plane.urdf")
+        pybullet.loadURDF("plane.urdf", physicsClientId=self._bullet)
 
         # Load Upkie
         self.__robot_id = pybullet.loadURDF(
             upkie_description.URDF_PATH,
             basePosition=[0, 0, 0.6],
             baseOrientation=[0, 0, 0, 1],
+            physicsClientId=self._bullet,
         )
 
         # Initialize model and build joint index mapping
@@ -137,8 +138,8 @@ class PyBulletBackend(Backend):
             self.randomize_inertias(inertia_variation)
 
         if gui:  # Enable GUI if it is requested
-            pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_RENDERING, 1)
-            pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_SHADOWS, 0)
+            pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_RENDERING, 1, physicsClientId=self._bullet)
+            pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_SHADOWS, 0, physicsClientId=self._bullet)
             pybullet.resetDebugVisualizerCamera(
                 cameraDistance=1.0,
                 cameraYaw=45,
@@ -165,8 +166,8 @@ class PyBulletBackend(Backend):
         self._joint_indices = {}
         self._joint_properties = {}
         
-        for bullet_idx in range(pybullet.getNumJoints(self.__robot_id)):
-            joint_info = pybullet.getJointInfo(self.__robot_id, bullet_idx)
+        for bullet_idx in range(pybullet.getNumJoints(self.__robot_id, physicsClientId=self._bullet)):
+            joint_info = pybullet.getJointInfo(self.__robot_id, bullet_idx, physicsClientId=self._bullet)
             joint_name = joint_info[1].decode("utf-8")
             if joint_name in Model.JOINT_NAMES:
                 self._joint_indices[joint_name] = bullet_idx
@@ -189,6 +190,7 @@ class PyBulletBackend(Backend):
                     bullet_idx,
                     pybullet.VELOCITY_CONTROL,
                     force=0,
+                    physicsClientId=self._bullet,
                 )
 
             link_name = joint_info[12].decode("utf-8")
@@ -214,7 +216,8 @@ class PyBulletBackend(Backend):
         """
         if hasattr(self, "_bullet") and self._bullet is not None:
             try:
-                pybullet.disconnect()
+                # Disconnect this specific connection using physicsClientId
+                pybullet.disconnect(physicsClientId=self._bullet)
             except pybullet.error:
                 # PyBullet may already be disconnected, ignore the error
                 pass
@@ -237,8 +240,8 @@ class PyBulletBackend(Backend):
         # Verify connection is actually active by attempting a simple query
         # This will raise an error if not connected, which we'll catch
         try:
-            # Test connection by getting number of bodies
-            pybullet.getNumBodies()
+            # Test connection by getting number of bodies for this specific client
+            pybullet.getNumBodies(physicsClientId=self._bullet)
         except (pybullet.error, AttributeError) as e:
             raise UpkieRuntimeError(
                 f"PyBullet connection is not active: {e}. "
@@ -248,7 +251,7 @@ class PyBulletBackend(Backend):
         # Reset robot state - this will work even if robot was previously deleted
         # as resetBasePositionAndOrientation will handle it
         self._reset_robot_state(init_state)
-        pybullet.stepSimulation()
+        pybullet.stepSimulation(physicsClientId=self._bullet)
         return self.get_spine_observation()
 
     def _reset_robot_state(self, init_state: RobotState):
@@ -270,6 +273,7 @@ class PyBulletBackend(Backend):
                 upkie_description.URDF_PATH,
                 basePosition=[0, 0, 0.6],
                 baseOrientation=[0, 0, 0, 1],
+                physicsClientId=self._bullet,
             )
             # Rebuild joint indices for the new robot body
             self._build_joint_indices()
@@ -278,7 +282,7 @@ class PyBulletBackend(Backend):
                 joint_name: 0.0 for joint_name in self._joint_indices.keys()
             }
             # Step simulation once to initialize the new robot
-            pybullet.stepSimulation()
+            pybullet.stepSimulation(physicsClientId=self._bullet)
         
         # Reset base position and orientation
         position = init_state.position_base_in_world
@@ -289,6 +293,7 @@ class PyBulletBackend(Backend):
             self.__robot_id,
             position,
             orientation_quat_bullet,
+            physicsClientId=self._bullet,
         )
 
         # Reset base velocity
@@ -298,6 +303,7 @@ class PyBulletBackend(Backend):
             self.__robot_id,
             linear_velocity,
             angular_velocity,
+            physicsClientId=self._bullet,
         )
 
         # Reset joint states
@@ -307,6 +313,7 @@ class PyBulletBackend(Backend):
                 self.__robot_id,
                 bullet_joint_idx,
                 init_state.joint_configuration[joint.idx_q],
+                physicsClientId=self._bullet,
             )
 
     def step(self, action: dict) -> dict:
@@ -340,13 +347,14 @@ class PyBulletBackend(Backend):
                         joint_idx,
                         pybullet.TORQUE_CONTROL,
                         force=joint_torque,
+                        physicsClientId=self._bullet,
                     )
 
             # Apply external forces, if any
             self.__apply_external_forces()
 
             # Step the simulation
-            pybullet.stepSimulation()
+            pybullet.stepSimulation(physicsClientId=self._bullet)
 
         return self.get_spine_observation()
 
@@ -536,13 +544,14 @@ class PyBulletBackend(Backend):
                     )
                     try:
                         # Verify connection is still valid
-                        pybullet.getNumBodies()
+                        pybullet.getNumBodies(physicsClientId=self._bullet)
                         
                         # Reload robot
                         self.__robot_id = pybullet.loadURDF(
                             upkie_description.URDF_PATH,
                             basePosition=[0, 0, 0.6],
                             baseOrientation=[0, 0, 0, 1],
+                            physicsClientId=self._bullet,
                         )
                         self._build_joint_indices()
                         self.__joint_torques = {
@@ -550,7 +559,7 @@ class PyBulletBackend(Backend):
                         }
                         # Step simulation multiple times to fully initialize
                         for _ in range(10):
-                            pybullet.stepSimulation()
+                            pybullet.stepSimulation(physicsClientId=self._bullet)
                         retry_count += 1
                         servo_obs = {}  # Reset observations
                         continue
@@ -655,9 +664,9 @@ class PyBulletBackend(Backend):
         This method stores the original dynamic properties of each link
         so they can be used later for randomization.
         """
-        num_joints = pybullet.getNumJoints(self.__robot_id)
+        num_joints = pybullet.getNumJoints(self.__robot_id, physicsClientId=self._bullet)
         for link_id in range(num_joints):
-            dynamics_info = pybullet.getDynamicsInfo(self.__robot_id, link_id)
+            dynamics_info = pybullet.getDynamicsInfo(self.__robot_id, link_id, physicsClientId=self._bullet)
             mass = dynamics_info[0]
             local_inertia_diagonal = dynamics_info[2]  # tuple of 3 values
 

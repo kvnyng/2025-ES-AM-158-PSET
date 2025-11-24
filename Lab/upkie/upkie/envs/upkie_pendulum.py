@@ -169,6 +169,10 @@ class UpkiePendulum(gym.Wrapper):
         self.max_angular_velocity = max_angular_velocity
         self.max_linear_velocity = max_linear_velocity
         self.env.max_time_steps = 300
+        
+        # Track previous actions for smoothness penalty (velocity and acceleration)
+        self.__previous_action = np.array([0.0])
+        self.__previous_action_change = 0.0  # Track action velocity for acceleration penalty
 
     def __get_env_observation(self, spine_observation: dict) -> np.ndarray:
         r"""!
@@ -210,6 +214,9 @@ class UpkiePendulum(gym.Wrapper):
         """
         self.time_stamp = 0
         self.initial_position = None
+        # Reset previous action for smoothness penalty
+        self.__previous_action = np.array([0.0])
+        self.__previous_action_change = 0.0  # Reset action velocity tracking
         _, info = self.env.reset(seed=seed, options=options)
         spine_observation = info["spine_observation"]
         for joint in self.env.model.upper_leg_joints:
@@ -309,7 +316,9 @@ class UpkiePendulum(gym.Wrapper):
         Compute reward based on observation and action.
 
         The reward encourages stability by penalizing deviations from the
-        ideal balanced state (θ=0, ẋ=0, ẏ=0) and large control actions.
+        ideal balanced state (θ=0, ẋ=0, ẏ=0), large control actions, and
+        rapid action changes (jitter). Uses a shifted reward scale to provide
+        better learning signal.
 
         \param observation Current observation vector [θ, p, ẋ, ẏ].
         \param action Current action [ground_velocity].
@@ -319,24 +328,45 @@ class UpkiePendulum(gym.Wrapper):
         theta_dot = observation[2]  # angular velocity (rad/s)
         p_dot = observation[3]  # linear velocity (m/s)
         action_mag = abs(action[0])  # action magnitude (m/s)
+        
+        # Compute action smoothness penalties
+        # First derivative: action velocity (rate of change)
+        action_change = action[0] - self.__previous_action[0]
+        action_change_abs = abs(action_change)
+        
+        # Second derivative: action acceleration (change in rate of change)
+        action_accel = abs(action_change - self.__previous_action_change)
+        
+        # Update tracking variables
+        self.__previous_action_change = action_change
+        self.__previous_action = action.copy()
 
-        # Reward weights (tuned for stability)
-        w_theta = 0.5  # penalty for pitch deviation
-        w_theta_dot = 0.1  # penalty for angular velocity
-        w_p_dot = 0.1  # penalty for linear velocity
-        w_action = 0.05  # penalty for large actions (encourages smooth control)
+        # Reward weights (tuned for stability and smoothness)
+        # Increased smoothness penalties significantly to reduce jitter
+        w_theta = 2.0  # penalty for pitch deviation (increased for better balance)
+        w_theta_dot = 0.5  # penalty for angular velocity
+        w_p_dot = 0.5  # penalty for linear velocity
+        w_action = 1.0  # penalty for large actions (significantly increased to reduce jitter)
+        w_smoothness = 2.0  # penalty for action velocity (first derivative, increased)
+        w_accel = 1.5  # penalty for action acceleration (second derivative, NEW)
 
-        # Compute reward: 1.0 - penalties
-        # Clamp to ensure reward is always positive
+        # Compute reward: start from a positive baseline and subtract penalties
+        # This provides a clearer learning signal - balanced state gives high reward
+        # The baseline of 1.0 means perfect balance (all terms = 0) gives reward = 1.0
         reward = 1.0 - (
             w_theta * theta**2
             + w_theta_dot * theta_dot**2
             + w_p_dot * p_dot**2
             + w_action * action_mag**2
+            + w_smoothness * action_change_abs**2
+            + w_accel * action_accel**2
         )
 
-        # Ensure reward is non-negative
-        return max(0.0, reward)
+        # Note: No clamping needed here - VecNormalize in train_pendulum.py will
+        # normalize and clip rewards appropriately. The reward is naturally bounded
+        # by physics limits, and extreme values are rare in practice.
+
+        return reward
 
     def __check_termination_conditions(
         self, observation: np.ndarray, spine_observation: dict

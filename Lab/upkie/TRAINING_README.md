@@ -28,6 +28,40 @@ Monitor training progress:
 tensorboard --logdir ./logs/tensorboard/
 ```
 
+### Plotting Training Metrics
+
+To create plots of training loss and other metrics:
+
+```bash
+# Plot metrics from the latest training run
+python plot_training_metrics.py
+
+# Plot metrics from a specific run
+python plot_training_metrics.py --run PPO_1
+
+# Save plot to file
+python plot_training_metrics.py --output training_metrics.png
+
+# Export metrics to CSV for custom analysis
+python plot_training_metrics.py --export-csv training_metrics.csv
+
+# Watch training in real-time (updates every 5 seconds)
+python plot_training_metrics.py --watch
+
+# Watch with custom refresh interval (e.g., every 2 seconds)
+python plot_training_metrics.py --watch --refresh 2.0
+```
+
+The script plots:
+- Policy loss
+- Value loss
+- Total loss
+- Learning rate
+- Explained variance
+- Approximate KL divergence
+- Clip fraction
+- Entropy loss (if applicable)
+
 ## Testing
 
 To test a trained policy:

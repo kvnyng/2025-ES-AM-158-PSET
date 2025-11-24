@@ -12,6 +12,7 @@ import gymnasium as gym
 import upkie.envs
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3 import PPO
+from upkie.envs.servos_reward_wrapper import ServosRewardWrapper
 
 # ---------------------------------------------------------------------
 # Upkie registration
@@ -171,6 +172,14 @@ def make_wrapped_env(
     gains: Optional[Dict[str, float]] = None,
 ) -> gym.Env:
     env = gym.make("Upkie-Spine-Servos", frequency=frequency_hz)
+    # Add reward wrapper (must be before action/obs wrappers to access full spine obs)
+    env = ServosRewardWrapper(
+        env,
+        fall_pitch=1.0,
+        max_position_drift=5.0,
+        max_angular_velocity=10.0,
+        max_linear_velocity=2.0,
+    )
     env = ServoVelActionWrapper(env, fixed_order=fixed_order, gains=gains)
     # IMPORTANT: flatten after action wrapper so the observation order matches the action order
     env = ServoObsFlattenWrapper(env)

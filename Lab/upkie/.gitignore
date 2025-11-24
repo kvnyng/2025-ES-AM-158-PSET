@@ -19,3 +19,4 @@ sandbox/
 tools/bazel
 uv.lock
 wiki/
+models/**/*.monitor.csv
